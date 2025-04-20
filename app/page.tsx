@@ -4,24 +4,14 @@ import Link from "next/link"
 import { ArrowRight, BarChart3, Bell, Eye, MessageSquare, Search } from "lucide-react"
 import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
-import { db } from "@/lib/db"
-import { businesses } from "@/lib/db/schema"
-import { eq } from "drizzle-orm"
 
 export default async function Home() {
+  // Check if user is authenticated
   const { userId } = await auth()
 
+  // If user is signed in, redirect to dashboard
   if (userId) {
-    // Check if user has completed onboarding
-    const business = await db.query.businesses.findFirst({
-      where: eq(businesses.userId, userId),
-    })
-
-    if (business) {
-      redirect("/dashboard")
-    } else {
-      redirect("/onboarding")
-    }
+    redirect("/dashboard")
   }
 
   return (
@@ -48,7 +38,7 @@ export default async function Home() {
               <span className="text-primary">AI-Powered</span> Competitor Analysis
             </h1>
             <p className="text-xl text-muted-foreground max-w-3xl mb-10">
-              Monitor your competitors&apos; marketing activities in real-time. Get insights on ads, campaigns, and
+              Monitor your competitors' marketing activities in real-time. Get insights on ads, campaigns, and
               strategies with our advanced AI analysis.
             </p>
             <Link href="/sign-up">

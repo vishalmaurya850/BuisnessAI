@@ -1,19 +1,19 @@
-"use client"
+"use client";
 
-import { zodResolver } from "@hookform/resolvers/zod"
-import { useForm } from "react-hook-form"
-import { z } from "zod"
-import { Button } from "@/components/ui/button"
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { toast } from "@/components/ui/use-toast"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { useState } from "react"
-import { Loader2, ArrowLeft } from "lucide-react"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
-import { Checkbox } from "@/components/ui/checkbox"
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { Button } from "@/components/ui/button";
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "@/components/ui/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState } from "react";
+import { Loader2, ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const competitorFormSchema = z.object({
   name: z.string().min(2, {
@@ -30,13 +30,13 @@ const competitorFormSchema = z.object({
   trackGoogle: z.boolean().default(true),
   trackInstagram: z.boolean().default(true),
   trackLinkedIn: z.boolean().default(false),
-})
+});
 
-type CompetitorFormValues = z.infer<typeof competitorFormSchema>
+type CompetitorFormValues = z.infer<typeof competitorFormSchema>;
 
 export default function AddCompetitorPage() {
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const router = useRouter()
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const router = useRouter();
 
   const form = useForm<CompetitorFormValues>({
     resolver: zodResolver(competitorFormSchema),
@@ -50,33 +50,51 @@ export default function AddCompetitorPage() {
       trackInstagram: true,
       trackLinkedIn: false,
     },
-  })
+  });
 
   async function onSubmit(data: CompetitorFormValues) {
-    setIsSubmitting(true)
+    setIsSubmitting(true);
 
     try {
-      // In a real app, this would be an API call to save the competitor
-      console.log(data)
+      // Send data to the API
+      const response = await fetch("/api/competitors", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      });
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      if (!response.ok) {
+        throw new Error("Failed to add competitor");
+      }
 
-      toast({
-        title: "Competitor added",
-        description: "The competitor has been added successfully.",
-      })
+      const result = await response.json();
+
+      // Display AI-generated insights (if available)
+      if (result.insights) {
+        toast({
+          title: "Competitor added with insights",
+          description: `AI Insights: ${result.insights}`,
+        });
+      } else {
+        toast({
+          title: "Competitor added",
+          description: "The competitor has been added successfully.",
+        });
+      }
 
       // Redirect to competitors page
-      router.push("/competitors")
-    } catch {
+      router.push("/competitors");
+    } catch (error) {
+      console.error("Error adding competitor:", error);
       toast({
         title: "Something went wrong",
         description: "Please try again later.",
         variant: "destructive",
-      })
+      });
     } finally {
-      setIsSubmitting(false)
+      setIsSubmitting(false);
     }
   }
 
@@ -252,5 +270,5 @@ export default function AddCompetitorPage() {
         </Card>
       </div>
     </div>
-  )
+  );
 }

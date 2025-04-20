@@ -4,42 +4,30 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArrowUpRight, BarChart3, Bell, Eye, LineChart, Plus, Rocket, TrendingUp, Users } from "lucide-react"
 import Link from "next/link"
-import { currentUser } from "@clerk/nextjs/server"
+import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
-import { BusinessSetupForm } from "@/components/business-setup-form"
 import { db } from "@/lib/db"
 import { businesses, competitors, ads, alerts, insights } from "@/lib/db/schema"
 import { eq, desc, sql } from "drizzle-orm"
 import { GenerateInsightButton } from "@/components/generate-insight-button"
 
 export default async function DashboardPage() {
-  const user = await currentUser()
+  // Get the authenticated user
+  const { userId } = await auth()
 
-  if (!user) {
+  if (!userId) {
     redirect("/sign-in")
   }
 
   // Check if user has set up their business
   const business = await db.query.businesses.findFirst({
-    where: eq(businesses.userId, user.id),
+    where: eq(businesses.userId, userId),
   })
 
   const hasBusinessSetup = !!business
 
   if (!hasBusinessSetup) {
-    return (
-      <div className="container py-10">
-        <div className="mx-auto max-w-3xl">
-          <div className="mb-8 text-center">
-            <h1 className="text-3xl font-bold mb-2">Welcome to CompetitorAI</h1>
-            <p className="text-muted-foreground">
-              Let&apos;s set up your business profile to start monitoring your competitors.
-            </p>
-          </div>
-          <BusinessSetupForm />
-        </div>
-      </div>
-    )
+    redirect("/onboarding")
   }
 
   // Get competitor count
@@ -48,18 +36,17 @@ export default async function DashboardPage() {
     .from(competitors)
 
   // Get active ads count
-  const activeAdsCount = await db
-    .select({ count: sql`COUNT(*)` })
-    .from(ads)
-    .where(eq(ads.isActive, true))
+  const activeAdsCount = await db.select({ count: sql`COUNT(*)` }).from(ads).where(eq(ads.isActive, true))
 
   // Get new alerts count (last 24 hours)
   const yesterday = new Date()
   yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayString = yesterday.toISOString() // Convert Date to string
+
   const newAlertsCount = await db
     .select({ count: sql`COUNT(*)` })
     .from(alerts)
-    .where(sql`${alerts.createdAt} > ${yesterday}`)
+    .where(sql`${alerts.createdAt} > ${yesterdayString}`)
 
   // Get insights count
   const insightsCount = await db.select({ count: sql`COUNT(*)` }).from(insights)
@@ -92,7 +79,7 @@ export default async function DashboardPage() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Monitor your competitors marketing activities and get insights.</p>
+          <p className="text-muted-foreground">Monitor your competitors' marketing activities and get insights.</p>
         </div>
         <div className="flex gap-4">
           <Link href="/competitors/add">
@@ -140,7 +127,7 @@ export default async function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle>Competitor Activity Overview</CardTitle>
-              <CardDescription>Summary of your competitors marketing activities in the last 30 days.</CardDescription>
+              <CardDescription>Summary of your competitors' marketing activities in the last 30 days.</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-[300px] flex items-center justify-center border rounded-md bg-muted/30">
@@ -262,7 +249,7 @@ export default async function DashboardPage() {
                 <CardTitle>AI-Generated Insights</CardTitle>
                 <CardDescription>Strategic insights based on competitor analysis</CardDescription>
               </div>
-              <GenerateInsightButton />
+              <GenerateInsightButton businessId={business?.id} />
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
@@ -286,7 +273,7 @@ export default async function DashboardPage() {
                   <div className="text-center py-10">
                     <p className="text-muted-foreground">No insights generated yet.</p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Click &quot;Generate Insight&quot; to create AI-powered insights.
+                      Click "Generate Insight" to create AI-powered insights.
                     </p>
                   </div>
                 )}

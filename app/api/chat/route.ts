@@ -5,6 +5,8 @@ import { db } from "@/lib/db"
 import { ads, competitors } from "@/lib/db/schema"
 import { desc, like } from "drizzle-orm"
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
   try {
     const { userId } = await auth()

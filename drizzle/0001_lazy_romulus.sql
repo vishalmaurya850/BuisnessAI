@@ -1,0 +1,1 @@
+ALTER TABLE "alerts" ADD COLUMN "userId" integer NOT NULL;

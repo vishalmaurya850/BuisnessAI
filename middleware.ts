@@ -1,74 +1,70 @@
 import { NextResponse } from "next/server"
-import { clerkMiddleware } from "@clerk/nextjs/server"
-import { db } from "@/lib/db"
-import { businesses } from "@/lib/db/schema"
-import { eq } from "drizzle-orm"
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
 
-// Custom middleware to check if user has completed onboarding
-async function checkOnboarding(userId: string | null): Promise<boolean> {
-  if (!userId) return false
+// Define route patterns
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)"
+])
 
-  try {
-    // Check if user has a business profile
-    const business = await db.query.businesses.findFirst({
-      where: eq(businesses.userId, userId),
-    })
+const isProtectedRoute = createRouteMatcher([
+  "/dashboard(.*)",
+  "/competitors(.*)",
+  "/ad-analysis(.*)",
+  "/alerts(.*)",
+  "/assistant(.*)",
+  "/settings(.*)",
+  "/onboarding(.*)"
+])
 
-    return !!business
-  } catch (error) {
-    console.error("Error checking onboarding status:", error)
-    return false
+export default clerkMiddleware(async (auth, req) => {
+  // Use destructured auth approach as requested
+  const { userId, redirectToSignIn } = await auth()
+  
+  const url = new URL(req.url);
+  const path = url.pathname;
+  
+  
+  // Always allow static files and API routes
+  if (path.includes("/_next") || path.includes("/favicon.ico") || path.startsWith("/api/")) {
+    return NextResponse.next();
   }
-}
-
-// Create our custom middleware that wraps Clerk's
-export default clerkMiddleware(async (auth: any, request: Request) => {
-  const url = new URL(request.url)
-  const isPublicPath =
-    url.pathname === "/" ||
-    url.pathname.startsWith("/sign-in") ||
-    url.pathname.startsWith("/sign-up") ||
-    url.pathname.includes("_next") ||
-    url.pathname.includes("favicon.ico")
-
-  // If the user is signed in and trying to access a protected route
-  if (auth.userId && !isPublicPath) {
-    // Check if the user is trying to access the onboarding page
-    if (url.pathname === "/onboarding") {
-      // Allow access to onboarding
-      return NextResponse.next()
+  
+  // If user is authenticated
+  if (userId) {
+    // If authenticated user is trying to access public routes, redirect to dashboard
+    if (isPublicRoute(req)) {
+      console.log("Redirecting authenticated user from public page to dashboard");
+      return NextResponse.redirect(new URL("/dashboard", req.url));
     }
-
-    // For all other protected routes, check if the user has completed onboarding
-    if (
-      url.pathname === "/dashboard" ||
-      url.pathname.startsWith("/competitors") ||
-      url.pathname.startsWith("/ad-analysis") ||
-      url.pathname.startsWith("/alerts") ||
-      url.pathname.startsWith("/assistant") ||
-      url.pathname.startsWith("/settings")
-    ) {
-      const hasCompletedOnboarding = await checkOnboarding(auth.userId)
-
-      if (!hasCompletedOnboarding) {
-        // Redirect to onboarding if not completed
-        return NextResponse.redirect(new URL("/onboarding", request.url))
-      }
-    }
-
-    // Allow access to all other protected routes
-    return NextResponse.next()
+    
+    // Allow authenticated users to access protected routes
+    return NextResponse.next();
   }
-
-  // If the user is not signed in and trying to access a protected route
-  if (!auth.userId && !isPublicPath) {
-    return NextResponse.redirect(new URL("/sign-in", request.url))
+  
+  // If user is not authenticated and trying to access protected routes
+  if (!userId && isProtectedRoute(req)) {
+    console.log("Redirecting unauthenticated user to sign-in using redirectToSignIn()");
+    // Use Clerk's redirectToSignIn function for proper handling
+    return redirectToSignIn({ returnBackUrl: req.url });
   }
-
-  // Allow access to public routes
-  return NextResponse.next()
+  
+  // Allow access to public routes for unauthenticated users
+  if (isPublicRoute(req)) {
+    console.log("Allowing access to public route:", path);
+    return NextResponse.next();
+  }
+  
+  // For any other routes, allow access
+  return NextResponse.next();
 })
 
 export const config = {
-  matcher: ["/((?!.+\\.[\\w]+$|_next).*)", "/", "/(api|trpc)(.*)"],
+  matcher: [
+    // Skip Next.js internals and all static files, unless found in search params
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    // Always run for API routes
+    '/(api|trpc)(.*)',
+  ],
 }

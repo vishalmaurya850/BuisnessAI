@@ -4,6 +4,8 @@ import type { AlertData, AlertResponseData } from "@/lib/types"
 import { eq } from "drizzle-orm"
 import nodemailer from "nodemailer"
 
+export const runtime = "nodejs";
+
 export async function createAlert(data: AlertData): Promise<AlertResponseData> {
   try {
     // If businessId is not provided, get it from the competitor
@@ -31,6 +33,7 @@ export async function createAlert(data: AlertData): Promise<AlertResponseData> {
         title: data.title,
         description: data.description,
         isImportant: data.isImportant || false,
+        userId: (await db.query.businesses.findFirst({ where: eq(businesses.id, businessId) }))?.userId ?? "", // Ensure userId is not undefined
       })
       .returning()
 

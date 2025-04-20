@@ -12,12 +12,15 @@ import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { CompetitorScrapeButton } from "@/components/competitor-scrape-button"
 
+export const runtime = "nodejs";
+
 export default async function CompetitorDetailPage({
   params,
 }: {
   params: { id: string }
 }) {
-  const competitorId = Number.parseInt(params.id)
+  const resolvedParams = await params;
+  const competitorId = Number.parseInt(resolvedParams.id);
 
   if (isNaN(competitorId)) {
     notFound()

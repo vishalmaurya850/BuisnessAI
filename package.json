@@ -59,6 +59,7 @@
     "ai": "latest",
     "autoprefixer": "^10.4.20",
     "better-sqlite3": "latest",
+    "bull": "^4.16.5",
     "bun-types": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -70,15 +71,16 @@
     "expo-sqlite": "latest",
     "gel": "latest",
     "input-otp": "1.4.1",
+    "ioredis": "^5.6.1",
     "knex": "latest",
     "kysely": "latest",
     "lucide-react": "^0.454.0",
     "mysql2": "latest",
-    "next": "15.2.4",
+    "next": "15.3.1-canary.14",
     "next-themes": "^0.4.4",
     "nodemailer": "^6.10.1",
     "pg": "latest",
-    "playwright": "latest",
+    "playwright": "^1.52.0",
     "postgres": "latest",
     "react": "^19",
     "react-day-picker": "8.10.1",
@@ -108,5 +110,6 @@
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.3",
     "typescript": "^5"
-  }
+  },
+  "type": "module"
 }

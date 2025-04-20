@@ -1,10 +1,10 @@
-import { generateText } from "ai"
-import { openai } from "@ai-sdk/openai"
 import type { AdType, AdAnalysis, CompetitorData, AdData, BusinessData, CompetitorDiscoveryResult } from "@/lib/types"
 import { GoogleGenerativeAI } from "@google/generative-ai"
 import { db } from "@/lib/db"
 import { competitors, ads, businesses } from "@/lib/db/schema"
 import { eq, desc, like } from "drizzle-orm"
+
+export const runtime = "nodejs"; 
 
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
@@ -40,11 +40,10 @@ export async function analyzeAdContent(content: string, adType: AdType): Promise
       Format the response as JSON with these fields: message, targetAudience, callToAction, strategy`
     }
 
-    // Use AI SDK to generate analysis
-    const { text } = await generateText({
-      model: openai("gpt-4o"),
-      prompt: prompt,
-    })
+    // Use Gemini to generate analysis
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
     // Parse the response as JSON
     try {
@@ -62,7 +61,7 @@ export async function analyzeAdContent(content: string, adType: AdType): Promise
 export async function analyzeImage(imageUrl: string): Promise<AdAnalysis> {
   try {
     // Use Gemini Vision for image analysis
-    const model = genAI.getGenerativeModel({ model: "gemini-pro-vision" })
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" })
 
     // Fetch the image
     const response = await fetch(imageUrl)
@@ -127,10 +126,9 @@ export async function analyzeVideo(videoUrl: string): Promise<AdAnalysis> {
     
     Format the response as JSON with these fields: promotion, tone, callToAction, targetAudience, strategy`
 
-    const { text } = await generateText({
-      model: openai("gpt-4o"),
-      prompt,
-    })
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
     // Parse the response as JSON
     try {
@@ -243,10 +241,9 @@ export async function generateChatResponse(question: string, userId: string): Pr
       Provide a helpful, concise response based only on the data provided. If the data doesn't contain information to answer the question, say so clearly.
     `
 
-    const { text } = await generateText({
-      model: openai("gpt-4o"),
-      prompt: prompt,
-    })
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
     return text
   } catch (error) {
@@ -260,46 +257,49 @@ export async function discoverCompetitors(business: BusinessData): Promise<Compe
     // Use AI to identify potential competitors
     const prompt = `
       I need to identify 5-10 potential competitors for a business with the following details:
-      
+
       Business Name: ${business.name}
       Industry: ${business.industry}
       ${business.location ? `Location: ${business.location}` : ""}
       Keywords: ${business.keywords}
       ${business.knownCompetitors ? `Known Competitors: ${business.knownCompetitors}` : ""}
-      
+
       For each competitor, provide:
       1. Name
       2. Website URL
       3. Industry/niche
-      
-      Format your response as JSON with an array of competitors, each with name, website, and industry fields.
-      Only include real, well-known companies that are actual competitors in this space.
+
+      Format your response ONLY as a valid JSON array of objects, where each object has "name", "website", and "industry" fields. Example: [{"name": "Example Inc", "website": "https://example.com", "industry": "Tech"}]
+      Do NOT include any introductory text, backticks, or the word "json". Just the array.
     `
 
-    const { text } = await generateText({
-      model: openai("gpt-4o"),
-      prompt,
-    })
+    // Use a reliable model name based on documentation
+    const modelName = "models/gemini-1.5-flash-latest"; // Or "models/gemini-1.5-flash-latest" etc.
+    const model = genAI.getGenerativeModel({ model: modelName });
 
-    // Parse the AI response
-    let competitorsList: { competitors: CompetitorDiscoveryResult[] }
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+
+    const sanitizedText = text.replace(/```/g, "").trim();
+
+    // Parse the sanitized response
+    let parsedResponse;
     try {
-      // Extract JSON from the response
-      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/)
-
-      if (jsonMatch) {
-        competitorsList = JSON.parse(jsonMatch[1] || jsonMatch[0]) as { competitors: CompetitorDiscoveryResult[] }
-      } else {
-        competitorsList = JSON.parse(text) as { competitors: CompetitorDiscoveryResult[] }
-      }
-
-      return competitorsList.competitors
-    } catch (e) {
-      console.error("Error parsing AI response:", e)
-      throw new Error("Failed to parse competitor data")
+      parsedResponse = JSON.parse(sanitizedText);
+    } catch (error) {
+      console.error("Error parsing AI response JSON:", error);
+      console.error("Raw text:", sanitizedText);
+      throw new Error("Failed to parse AI response");
     }
+
+    // Validate that the parsed response is an array
+    if (!Array.isArray(parsedResponse)) {
+      throw new Error("AI response is not a valid array");
+    }
+
+    return parsedResponse;
   } catch (error) {
-    console.error("Error discovering competitors:", error)
-    throw error
+    console.error("Error discovering competitors:", error);
+    throw error;
   }
-}
+} 

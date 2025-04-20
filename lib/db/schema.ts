@@ -1,5 +1,6 @@
 import type { InferModel } from "drizzle-orm"
 import { pgTable, serial, text, timestamp, boolean, json, integer, pgEnum } from "drizzle-orm/pg-core"
+import { relations } from "drizzle-orm"
 
 // Enums
 export const platformEnum = pgEnum("platform", [
@@ -98,6 +99,7 @@ export const ads = pgTable("ads", {
 
 export const alerts = pgTable("alerts", {
   id: serial("id").primaryKey(),
+  userId: text("userId").notNull(),
   businessId: integer("business_id")
     .notNull()
     .references(() => businesses.id, { onDelete: "cascade" }),
@@ -123,6 +125,13 @@ export const insights = pgTable("insights", {
   isApplied: boolean("is_applied").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 })
+
+export const alertsRelations = relations(alerts, ({ one }) => ({
+  competitor: one(competitors, {
+    fields: [alerts.competitorId],
+    references: [competitors.id],
+  }),
+}))
 
 // Types
 export type User = InferModel<typeof users>

@@ -4,6 +4,8 @@ import { db } from "@/lib/db"
 import { ads, competitors } from "@/lib/db/schema"
 import { eq, desc, sql, and } from "drizzle-orm"
 
+export const runtime = "nodejs";
+
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
     const { userId } = await auth()

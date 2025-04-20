@@ -5,8 +5,33 @@ import { Bell, Check, Filter, Search, Settings } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
+import { db } from "@/lib/db"
+import { alerts, competitors } from "@/lib/db/schema"
+import { desc, eq } from "drizzle-orm"
+import { auth } from "@clerk/nextjs/server"
 
-export default function AlertsPage() {
+export default async function AlertsPage() {
+  // Get the current user ID from auth
+  const { userId } = await auth();
+
+  if (!userId) {
+    return <div>Authentication required</div>;
+  }
+
+  // Fetch alerts from database
+  const alertsData = await db.query.alerts.findMany({
+    where: eq(alerts.userId, userId),
+    orderBy: [desc(alerts.createdAt)],
+    with: {
+      competitor: true
+    },
+    limit: 50
+  });
+
+  const allAlerts = alertsData;
+  const unreadAlerts = alertsData.filter(alert => !alert.isRead);
+  const importantAlerts = alertsData.filter(alert => alert.isImportant);
+
   return (
     <div className="container py-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
@@ -37,234 +62,134 @@ export default function AlertsPage() {
 
       <Tabs defaultValue="all" className="mb-8">
         <TabsList>
-          <TabsTrigger value="all">All Alerts</TabsTrigger>
-          <TabsTrigger value="unread">Unread</TabsTrigger>
-          <TabsTrigger value="important">Important</TabsTrigger>
+          <TabsTrigger value="all">All Alerts ({allAlerts.length})</TabsTrigger>
+          <TabsTrigger value="unread">Unread ({unreadAlerts.length})</TabsTrigger>
+          <TabsTrigger value="important">Important ({importantAlerts.length})</TabsTrigger>
         </TabsList>
+
         <TabsContent value="all" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">New Ad Campaign Detected</CardTitle>
-                </div>
-                <div className="px-2 py-1 rounded-full bg-primary/10 text-xs font-medium text-primary">New</div>
-              </div>
-              <CardDescription>2 hours ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor A has launched a new Facebook ad campaign targeting mobile users.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <Check className="h-4 w-4" /> Mark as Read
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">New Video Ad Detected</CardTitle>
-                </div>
-                <div className="px-2 py-1 rounded-full bg-primary/10 text-xs font-medium text-primary">New</div>
-              </div>
-              <CardDescription>5 hours ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor B has published a new video ad on Instagram highlighting their latest product features.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <Check className="h-4 w-4" /> Mark as Read
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-muted-foreground" />
-                  <CardTitle className="text-base">Google Ads Campaign Updated</CardTitle>
-                </div>
-              </div>
-              <CardDescription>1 day ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor C has updated their Google Ads campaign with new keywords and ad copy.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-muted-foreground" />
-                  <CardTitle className="text-base">Significant Ad Spend Increase</CardTitle>
-                </div>
-              </div>
-              <CardDescription>2 days ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor A has increased their ad spend by approximately 40% across all platforms.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          {allAlerts.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center">
+                <p className="text-muted-foreground">No alerts found. Add competitors to start tracking their activities.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            allAlerts.map((alert) => (
+              <AlertCard
+                key={alert.id}
+                alert={alert}
+                isNew={!alert.isRead}
+                isImportant={alert.isImportant}
+              />
+            ))
+          )}
         </TabsContent>
+
         <TabsContent value="unread" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">New Ad Campaign Detected</CardTitle>
-                </div>
-                <div className="px-2 py-1 rounded-full bg-primary/10 text-xs font-medium text-primary">New</div>
-              </div>
-              <CardDescription>2 hours ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor A has launched a new Facebook ad campaign targeting mobile users.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <Check className="h-4 w-4" /> Mark as Read
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">New Video Ad Detected</CardTitle>
-                </div>
-                <div className="px-2 py-1 rounded-full bg-primary/10 text-xs font-medium text-primary">New</div>
-              </div>
-              <CardDescription>5 hours ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor B has published a new video ad on Instagram highlighting their latest product features.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <Check className="h-4 w-4" /> Mark as Read
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          {unreadAlerts.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center">
+                <p className="text-muted-foreground">No unread alerts.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            unreadAlerts.map((alert) => (
+              <AlertCard
+                key={alert.id}
+                alert={alert}
+                isNew={true}
+                isImportant={alert.isImportant}
+              />
+            ))
+          )}
         </TabsContent>
+
         <TabsContent value="important" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bell className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-base">Significant Ad Spend Increase</CardTitle>
-                </div>
-                <div className="px-2 py-1 rounded-full bg-yellow-500/10 text-xs font-medium text-yellow-500">
-                  Important
-                </div>
-              </div>
-              <CardDescription>2 days ago</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm mb-4">
-                Competitor A has increased their ad spend by approximately 40% across all platforms.
-              </p>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm">
-                  View Details
-                </Button>
-                <Button variant="ghost" size="sm" className="gap-1">
-                  <Check className="h-4 w-4" /> Mark as Read
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          {importantAlerts.length === 0 ? (
+            <Card>
+              <CardContent className="py-10 text-center">
+                <p className="text-muted-foreground">No important alerts.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            importantAlerts.map((alert) => (
+              <AlertCard
+                key={alert.id}
+                alert={alert}
+                isNew={!alert.isRead}
+                isImportant={true}
+              />
+            ))
+          )}
         </TabsContent>
       </Tabs>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Alert Settings</CardTitle>
-          <CardDescription>Configure your notification preferences</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="new-campaigns">New Ad Campaigns</Label>
-                <p className="text-sm text-muted-foreground">Get notified when competitors launch new campaigns</p>
-              </div>
-              <Switch id="new-campaigns" defaultChecked />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="ad-changes">Ad Content Changes</Label>
-                <p className="text-sm text-muted-foreground">Get notified when competitors update their ad content</p>
-              </div>
-              <Switch id="ad-changes" defaultChecked />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="spend-changes">Ad Spend Changes</Label>
-                <p className="text-sm text-muted-foreground">
-                  Get notified when competitors significantly change their ad spend
-                </p>
-              </div>
-              <Switch id="spend-changes" defaultChecked />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="email-alerts">Email Notifications</Label>
-                <p className="text-sm text-muted-foreground">Receive alert notifications via email</p>
-              </div>
-              <Switch id="email-alerts" />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   )
+}
+
+// Helper component for displaying an alert
+function AlertCard({ alert, isNew, isImportant }: any) {
+  const timeSince = getTimeSince(new Date(alert.createdAt));
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bell className={`h-5 w-5 ${isNew ? 'text-primary' : 'text-muted-foreground'}`} />
+            <CardTitle className="text-base">{alert.title}</CardTitle>
+          </div>
+          {isNew && (
+            <div className="px-2 py-1 rounded-full bg-primary/10 text-xs font-medium text-primary">New</div>
+          )}
+          {isImportant && (
+            <div className="px-2 py-1 rounded-full bg-yellow-500/10 text-xs font-medium text-yellow-500">
+              Important
+            </div>
+          )}
+        </div>
+        <CardDescription>{timeSince}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="text-sm mb-4">
+          {alert.description || `${alert.competitor?.name || "A competitor"} has ${alert.type?.toLowerCase() || "an update"}.`}
+        </p>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <a href={`/alerts/${alert.id}`}>View Details</a>
+          </Button>
+          {isNew && (
+            <form action={`/api/alerts/${alert.id}/mark-read`} method="POST">
+              <Button variant="ghost" size="sm" className="gap-1" type="submit">
+                <Check className="h-4 w-4" /> Mark as Read
+              </Button>
+            </form>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Helper function to format time since alert
+function getTimeSince(date: Date) {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+
+  let interval = seconds / 31536000;
+  if (interval > 1) return Math.floor(interval) + " years ago";
+
+  interval = seconds / 2592000;
+  if (interval > 1) return Math.floor(interval) + " months ago";
+
+  interval = seconds / 86400;
+  if (interval > 1) return Math.floor(interval) + " days ago";
+
+  interval = seconds / 3600;
+  if (interval > 1) return Math.floor(interval) + " hours ago";
+
+  interval = seconds / 60;
+  if (interval > 1) return Math.floor(interval) + " minutes ago";
+
+  return Math.floor(seconds) + " seconds ago";
 }

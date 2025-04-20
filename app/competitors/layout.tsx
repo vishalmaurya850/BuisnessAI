@@ -3,7 +3,7 @@ import { MainNav } from "@/components/main-nav"
 import { UserNav } from "@/components/user-nav"
 import { ThemeToggle } from "@/components/theme-toggle"
 
-export default function DashboardLayout({
+export default function CompetitorsLayout({
   children,
 }: {
   children: React.ReactNode

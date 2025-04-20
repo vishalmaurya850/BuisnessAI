@@ -4,8 +4,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BarChart3, Download, Filter, ImageIcon, Search, Video } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { db } from "@/lib/db"
+import { ads } from "@/lib/db/schema"
+import { eq, desc } from "drizzle-orm"
 
-export default function AdAnalysisPage() {
+export default async function AdAnalysisPage() {
+  // Fetch ads from the database
+  const allAds = await db.query.ads.findMany({
+    orderBy: [desc(ads.createdAt)],
+  })
+
+  const imageAds = allAds.filter((ad): ad is typeof ad & { type: "image" } => ad.type === "image")
+  const videoAds = allAds.filter((ad): ad is typeof ad & { type: "video" } => ad.type === "video")
+  const textAds = allAds.filter((ad): ad is typeof ad & { type: "text" } => ad.type === "text")
+
   return (
     <div className="container py-10">
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
@@ -53,52 +65,56 @@ export default function AdAnalysisPage() {
         </TabsList>
         <TabsContent value="all" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <AdCard
-                key={i}
-                competitor={`Competitor ${String.fromCharCode(65 + (i % 3))}`}
-                platform={i % 3 === 0 ? "Facebook" : i % 3 === 1 ? "Google" : "Instagram"}
-                type={i % 3 === 0 ? "image" : i % 3 === 1 ? "text" : "video"}
-                date={`${i + 1} days ago`}
-              />
-            ))}
+            {allAds
+              .filter((ad): ad is typeof ad & { type: "image" | "video" | "text" } =>
+                ["image", "video", "text"].includes(ad.type)
+              )
+              .map((ad) => (
+                <AdCard
+                  key={ad.id}
+                  competitor={ad.competitorId.toString()}
+                  platform={ad.platform}
+                  type={ad.type}
+                  date={new Date(ad.createdAt).toLocaleDateString()}
+                />
+              ))}
           </div>
         </TabsContent>
         <TabsContent value="image" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 2 }).map((_, i) => (
+            {imageAds.map((ad) => (
               <AdCard
-                key={i}
-                competitor={`Competitor ${String.fromCharCode(65 + i)}`}
-                platform={i % 2 === 0 ? "Facebook" : "Instagram"}
-                type="image"
-                date={`${i + 1} days ago`}
+                key={ad.id}
+                competitor={ad.competitorId.toString()}
+                platform={ad.platform}
+                type={ad.type as "image" | "video" | "text"}
+                date={new Date(ad.createdAt).toLocaleDateString()}
               />
             ))}
           </div>
         </TabsContent>
         <TabsContent value="video" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 2 }).map((_, i) => (
+            {videoAds.map((ad) => (
               <AdCard
-                key={i}
-                competitor={`Competitor ${String.fromCharCode(66 + i)}`}
-                platform="Instagram"
-                type="video"
-                date={`${i + 3} days ago`}
+                key={ad.id}
+                competitor={ad.competitorId.toString()}
+                platform={ad.platform}
+                type={ad.type}
+                date={new Date(ad.createdAt).toLocaleDateString()}
               />
             ))}
           </div>
         </TabsContent>
         <TabsContent value="text" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 2 }).map((_, i) => (
+            {textAds.map((ad) => (
               <AdCard
-                key={i}
-                competitor={`Competitor ${String.fromCharCode(65 + i)}`}
-                platform="Google"
-                type="text"
-                date={`${i + 2} days ago`}
+                key={ad.id}
+                competitor={ad.competitorId.toString()}
+                platform={ad.platform}
+                type={ad.type}
+                date={new Date(ad.createdAt).toLocaleDateString()}
               />
             ))}
           </div>
@@ -165,8 +181,8 @@ function AdCard({
               {type === "image"
                 ? "Product showcase with bright colors targeting young adults"
                 : type === "video"
-                  ? "Emotional storytelling with customer testimonials"
-                  : "Direct response ad with strong call-to-action"}
+                ? "Emotional storytelling with customer testimonials"
+                : "Direct response ad with strong call-to-action"}
             </p>
           </div>
         </div>

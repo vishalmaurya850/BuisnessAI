@@ -193,7 +193,7 @@ export default function AssistantPage() {
           <Card>
             <CardContent className="p-4">
               <h3 className="text-lg font-medium mb-3">Suggested Questions</h3>
-              <div className="space-y-2">
+              <div className="space-y-2 flex flex-col max-h-[300px]">
                 {[
                   "What are my competitors doing this week?",
                   "Any new video ads from Competitor A?",
@@ -202,15 +202,14 @@ export default function AssistantPage() {
                   "How does my ad strategy compare to competitors?",
                 ].map((question, i) => (
                   <Button
-                    key={i}
-                    variant="outline"
-                    className="w-full justify-start text-left h-auto py-2"
-                    onClick={() => {
-                      setInput(question)
-                    }}
-                  >
-                    {question}
-                  </Button>
+                  key={i}
+                  variant="outline"
+                  className=" whitespace-normal break-words flex-1 text-left justify-start p-4"
+                  onClick={() => setInput(question)}
+                >
+                  <span>{question}</span>
+                </Button>
+                
                 ))}
               </div>
             </CardContent>

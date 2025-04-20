@@ -6,7 +6,7 @@ import { Sparkles, Loader2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 import { useRouter } from "next/navigation"
 
-export function GenerateInsightButton() {
+export function GenerateInsightButton({ businessId }: { businessId: number }) {
   const [isLoading, setIsLoading] = useState(false)
   const { toast } = useToast()
   const router = useRouter()
@@ -20,7 +20,7 @@ export function GenerateInsightButton() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ generate: true }),
+        body: JSON.stringify({ generate: true, businessId }), // Include businessId
       })
 
       if (!response.ok) {

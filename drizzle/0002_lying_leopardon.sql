@@ -1,0 +1,1 @@
+ALTER TABLE "alerts" ALTER COLUMN "userId" SET DATA TYPE text;

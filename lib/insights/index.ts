@@ -1,9 +1,13 @@
 import { db } from "@/lib/db"
 import { insights, ads, competitors } from "@/lib/db/schema"
 import { desc, eq, and, gte } from "drizzle-orm"
-import { generateText } from "ai"
-import { openai } from "@ai-sdk/openai"
+import { GoogleGenerativeAI } from "@google/generative-ai"
 import type { InsightData } from "@/lib/types"
+
+export const runtime = "nodejs";
+
+// Initialize Google Generative AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
 export async function generateInsightFromRecentActivity(businessId: number): Promise<InsightData | null> {
   try {
@@ -62,7 +66,7 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
       adsByCompetitor[ad.competitorName].push(ad)
     })
 
-    // Generate insight using AI
+    // Generate insight using Google Generative AI
     const prompt = `
       Based on the following recent competitor ad data, generate a strategic insight and recommendation:
       
@@ -74,10 +78,9 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
       - recommendation: A specific, actionable recommendation based on the insight (max 200 characters)
     `
 
-    const { text } = await generateText({
-      model: openai("gpt-4o"),
-      prompt,
-    })
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
 
     // Parse the AI response
     let aiResponse: {

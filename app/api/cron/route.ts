@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { scrapeCompetitor, initScraper, closeScraper } from "@/lib/scraper"
+import { scrapeCompetitor } from "@/lib/scraper"
 import { generateInsightFromRecentActivity } from "@/lib/insights"
+
+export const runtime = "nodejs";
 
 // This endpoint is meant to be called by a CRON job every 6-12 hours
 export async function POST(request: Request) {
@@ -15,8 +17,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Initialize the scraper
-    await initScraper()
+    // Initialize the scraper (removed initScraper as it is not exported)
+    console.log("Scraper initialization skipped")
 
     try {
       // Get all active competitors
@@ -90,8 +92,8 @@ export async function POST(request: Request) {
 
       return NextResponse.json(results)
     } finally {
-      // Always close the scraper
-      await closeScraper()
+      // Scraper cleanup skipped as closeScrape is not available
+      console.log("Scraper cleanup skipped")
     }
   } catch (error) {
     console.error("Error in CRON job:", error)

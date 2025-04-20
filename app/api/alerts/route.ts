@@ -4,6 +4,8 @@ import { db } from "@/lib/db"
 import { alerts } from "@/lib/db/schema"
 import { desc, eq, and, sql } from "drizzle-orm"
 
+export const runtime = "nodejs";
+
 export async function GET(request: Request) {
   try {
     const { userId } = await auth()

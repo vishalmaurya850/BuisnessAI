@@ -3,6 +3,8 @@ import { auth } from "@clerk/nextjs/server"
 import { scrapeCompetitor } from "@/lib/scraper"
 import { db } from "@/lib/db"
 
+export const runtime = "nodejs";
+
 export async function POST(request: Request) {
   try {
     const { userId } = await auth()

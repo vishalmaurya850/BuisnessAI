@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm"
 import { discoverCompetitors } from "@/lib/ai"
 import type { BusinessData, DiscoveryResponse, CompetitorData } from "@/lib/types"
 
+export const runtime = "nodejs";
+
 export async function POST() {
   try {
     const { userId } = await auth()
