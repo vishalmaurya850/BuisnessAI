@@ -5,14 +5,26 @@ import { BarChart3, Download, Filter, ImageIcon, Search, Video } from "lucide-re
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { db } from "@/lib/db"
+import { notFound } from "next/navigation"
 import { ads } from "@/lib/db/schema"
 import { desc } from "drizzle-orm"
 
 export default async function AdAnalysisPage() {
+  // Check if the code is running in a server environment
+  if (typeof window !== "undefined") {
+    return notFound(); // Prevent rendering on the client
+  }
+
   // Fetch ads from the database
-  const allAds = await db.query.ads.findMany({
-    orderBy: [desc(ads.createdAt)],
-  })
+  let allAds = [];
+  try {
+    allAds = await db.query.ads.findMany({
+      orderBy: [desc(ads.createdAt)],
+    });
+  } catch (error) {
+    console.error("Error fetching ads:", error);
+    return notFound(); // Handle database connection errors gracefully
+  }
 
   const imageAds = allAds.filter((ad): ad is typeof ad & { type: "image" } => ad.type === "image")
   const videoAds = allAds.filter((ad): ad is typeof ad & { type: "video" } => ad.type === "video")
