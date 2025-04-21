@@ -1,5 +1,5 @@
 {
-  "id": "1b9a668e-265f-48c4-aca1-7cbfd22c8619",
+  "id": "be88c89c-5bc0-4fed-931e-d6bf23a97485",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -124,6 +124,12 @@
           "name": "id",
           "type": "serial",
           "primaryKey": true,
+          "notNull": true
+        },
+        "userId": {
+          "name": "userId",
+          "type": "text",
+          "primaryKey": false,
           "notNull": true
         },
         "business_id": {

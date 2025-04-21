@@ -19,6 +19,7 @@ CREATE TABLE "ads" (
 --> statement-breakpoint
 CREATE TABLE "alerts" (
 	"id" serial PRIMARY KEY NOT NULL,
+	"userId" text NOT NULL,
 	"business_id" integer NOT NULL,
 	"competitor_id" integer NOT NULL,
 	"type" "alert_type" NOT NULL,
