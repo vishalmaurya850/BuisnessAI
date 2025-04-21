@@ -3,10 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Bell, Check, Filter, Search, Settings } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
-import { Label } from "@/components/ui/label"
 import { db } from "@/lib/db"
-import { alerts, competitors } from "@/lib/db/schema"
+import { alerts } from "@/lib/db/schema"
 import { desc, eq } from "drizzle-orm"
 import { auth } from "@clerk/nextjs/server"
 

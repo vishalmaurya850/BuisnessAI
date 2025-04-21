@@ -12,7 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/use-toast";
 
 export default function OnboardingPage() {
-  const { isLoaded, isSignedIn, user } = useUser();
+  const { isLoaded, isSignedIn } = useUser();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState("welcome");
   const [businessCreated, setBusinessCreated] = useState(false);
@@ -90,7 +90,6 @@ export default function OnboardingPage() {
         throw new Error("Failed to discover competitors");
       }
 
-      const data = await response.json();
 
       setCompetitorsDiscovered(true);
       setActiveTab("scrape");
@@ -184,7 +183,7 @@ export default function OnboardingPage() {
     <div className="container max-w-4xl py-10">
       <div className="mb-8 text-center">
         <h1 className="text-3xl font-bold mb-2">Welcome to CompetitorAI</h1>
-        <p className="text-muted-foreground">Let's get your account set up in just a few steps.</p>
+        <p className="text-muted-foreground">Let&apos;s get your account set up in just a few steps.</p>
       </div>
 
       <Progress value={progress} className="mb-8" />
@@ -221,7 +220,7 @@ export default function OnboardingPage() {
             <CardHeader>
               <CardTitle>Discovering Competitors</CardTitle>
               <CardDescription>
-                We're using AI to identify relevant competitors based on your business information.
+                We&apos;re using AI to identify relevant competitors based on your business information.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -231,7 +230,7 @@ export default function OnboardingPage() {
                     <CheckCircle2 className="h-16 w-16 text-primary mx-auto mb-4" />
                     <h3 className="text-xl font-medium mb-2">Competitors Discovered!</h3>
                     <p className="text-muted-foreground mb-6">
-                      We've identified relevant competitors in your industry.
+                      We&apos;ve identified relevant competitors in your industry.
                     </p>
                   </div>
                 ) : (
@@ -253,7 +252,7 @@ export default function OnboardingPage() {
             <CardHeader>
               <CardTitle>Initial Analysis</CardTitle>
               <CardDescription>
-                We're gathering and analyzing data from your competitors' marketing activities.
+                We&apos;re gathering and analyzing data from your competitors marketing activities.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -263,7 +262,7 @@ export default function OnboardingPage() {
                     <Loader2 className="h-16 w-16 animate-spin mx-auto mb-4" />
                     <h3 className="text-xl font-medium mb-2">Analyzing Competitor Data...</h3>
                     <p className="text-muted-foreground">
-                      We're gathering information about your competitors' ads, campaigns, and marketing strategies.
+                      We&apos;re gathering information about your competitors ads, campaigns, and marketing strategies.
                     </p>
                   </div>
                 ) : initialScrapeComplete ? (
@@ -271,7 +270,7 @@ export default function OnboardingPage() {
                     <CheckCircle2 className="h-16 w-16 text-primary mx-auto mb-4" />
                     <h3 className="text-xl font-medium mb-2">Setup Complete!</h3>
                     <p className="text-muted-foreground mb-6">
-                      Your account is now set up and ready to use. We'll continue monitoring your competitors in the
+                      Your account is now set up and ready to use. We&apos;ll continue monitoring your competitors in the
                       background.
                     </p>
                     <Button onClick={goToDashboard} className="gap-2">
@@ -283,7 +282,7 @@ export default function OnboardingPage() {
                     <Loader2 className="h-16 w-16 animate-spin mx-auto mb-4" />
                     <h3 className="text-xl font-medium mb-2">Analyzing Competitor Data...</h3>
                     <p className="text-muted-foreground">
-                      We're gathering information about your competitors' ads, campaigns, and marketing strategies.
+                      We&apos;re gathering information about your competitors ads, campaigns, and marketing strategies.
                     </p>
                   </div>
                 )}

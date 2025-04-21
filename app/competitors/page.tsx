@@ -1,39 +1,35 @@
-"use client";
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Eye, Plus, Search } from "lucide-react"
+import Link from "next/link"
+import { Input } from "@/components/ui/input"
+import { db } from "@/lib/db"
+import { competitors } from "@/lib/db/schema"
+import { desc } from "drizzle-orm"
+import { DeleteCompetitorDialog } from "@/components/competitors/delete-competitor-dialog"
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Eye, Plus, Search, Trash2 } from "lucide-react";
-import Link from "next/link";
-import { Input } from "@/components/ui/input";
-import { useState, useEffect } from "react";
+export default async function CompetitorsPage() {
+  // Fetch competitors from the database
+  const allCompetitors = await db.query.competitors.findMany({
+    orderBy: [desc(competitors.updatedAt)],
+  })
 
-export default function CompetitorsPage() {
-  const [competitorList, setCompetitorList] = useState<
-    { id: number; name: string; industry: string; lastScraped: Date | null }[]
-  >([]);
+  // Get most active competitors (those with most recent updates)
+  const activeCompetitors = [...allCompetitors]
+    .sort((a, b) => {
+      const aDate = a.lastScraped ? new Date(a.lastScraped).getTime() : 0
+      const bDate = b.lastScraped ? new Date(b.lastScraped).getTime() : 0
+      return bDate - aDate
+    })
+    .slice(0, 3)
 
-  // Fetch competitors from the database on the client side
-  useEffect(() => {
-    async function fetchCompetitors() {
-      try {
-        const response = await fetch("/api/competitors");
-        if (!response.ok) {
-          throw new Error("Failed to fetch competitors");
-        }
-        const data = await response.json();
-        setCompetitorList(data);
-      } catch (error) {
-        console.error("Error fetching competitors:", error);
-      }
-    }
-
-    fetchCompetitors();
-  }, []);
-
-  const handleDelete = (id: number) => {
-    setCompetitorList((prev) => prev.filter((competitor) => competitor.id !== id));
-  };
+  // Get recently added competitors
+  const recentCompetitors = [...allCompetitors]
+    .sort((a, b) => {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+    .slice(0, 3)
 
   return (
     <div className="container py-10">
@@ -66,58 +62,94 @@ export default function CompetitorsPage() {
         </TabsList>
         <TabsContent value="all" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {competitorList.map((competitor) => (
-              <CompetitorCard
-                key={competitor.id}
-                competitorId={competitor.id}
-                name={competitor.name}
-                industry={competitor.industry}
-                activeAds={0} // Replace 0 with the actual logic to calculate active ads if applicable
-                lastActivity={competitor.lastScraped ? new Date(competitor.lastScraped).toISOString() : "N/A"}
-                onDelete={handleDelete}
-              />
-            ))}
+            {allCompetitors.length > 0 ? (
+              allCompetitors.map((competitor) => (
+                <CompetitorCard
+                  key={competitor.id}
+                  id={competitor.id}
+                  name={competitor.name}
+                  industry={competitor.industry}
+                  activeAds={10} // This would ideally be fetched from the database
+                  lastActivity={
+                    competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
+                  }
+                />
+              ))
+            ) : (
+              <div className="col-span-3 text-center py-10">
+                <p className="text-muted-foreground">No competitors found.</p>
+                <p className="text-sm text-muted-foreground mt-2">Add your first competitor to get started.</p>
+                <Link href="/competitors/add" className="mt-4 inline-block">
+                  <Button className="gap-2">
+                    <Plus className="h-4 w-4" /> Add Competitor
+                  </Button>
+                </Link>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+        <TabsContent value="active" className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {activeCompetitors.length > 0 ? (
+              activeCompetitors.map((competitor) => (
+                <CompetitorCard
+                  key={competitor.id}
+                  id={competitor.id}
+                  name={competitor.name}
+                  industry={competitor.industry}
+                  activeAds={10} // This would ideally be fetched from the database
+                  lastActivity={
+                    competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
+                  }
+                />
+              ))
+            ) : (
+              <div className="col-span-3 text-center py-10">
+                <p className="text-muted-foreground">No active competitors found.</p>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+        <TabsContent value="recent" className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {recentCompetitors.length > 0 ? (
+              recentCompetitors.map((competitor) => (
+                <CompetitorCard
+                  key={competitor.id}
+                  id={competitor.id}
+                  name={competitor.name}
+                  industry={competitor.industry}
+                  activeAds={10} // This would ideally be fetched from the database
+                  lastActivity={
+                    competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
+                  }
+                />
+              ))
+            ) : (
+              <div className="col-span-3 text-center py-10">
+                <p className="text-muted-foreground">No recently added competitors found.</p>
+              </div>
+            )}
           </div>
         </TabsContent>
       </Tabs>
     </div>
-  );
+  )
 }
 
 function CompetitorCard({
-  competitorId,
+  id,
   name,
   industry,
   activeAds,
   lastActivity,
-  onDelete,
 }: {
-  competitorId: number;
-  name: string;
-  industry: string;
-  activeAds: number;
-  lastActivity: string;
-  onDelete: (id: number) => void;
+  id: number
+  name: string
+  industry: string
+  activeAds: number
+  lastActivity: string
 }) {
-  const handleDelete = async () => {
-    if (confirm(`Are you sure you want to delete ${name}?`)) {
-      try {
-        const response = await fetch(`/api/competitors/${competitorId}`, {
-          method: "DELETE",
-        });
-
-        if (!response.ok) {
-          throw new Error("Failed to delete competitor");
-        }
-
-        onDelete(competitorId); // Update the UI
-      } catch (error) {
-        console.error("Error deleting competitor:", error);
-        alert("Failed to delete competitor. Please try again.");
-      }
-    }
-  };
-
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -125,13 +157,11 @@ function CompetitorCard({
           <CardTitle>{name}</CardTitle>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" asChild>
-              <Link href={`/competitors/${competitorId}`}>
+              <Link href={`/competitors/${id}`}>
                 <Eye className="h-4 w-4" />
               </Link>
             </Button>
-            <Button variant="ghost" size="icon" onClick={handleDelete}>
-              <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+            <DeleteCompetitorDialog competitorId={id} competitorName={name} />
           </div>
         </div>
         <CardDescription>{industry}</CardDescription>
@@ -148,7 +178,7 @@ function CompetitorCard({
           </div>
         </div>
         <div className="mt-4 pt-4 border-t">
-          <Link href={`/competitors/${competitorId}`}>
+          <Link href={`/competitors/${id}`}>
             <Button variant="outline" className="w-full">
               View Details
             </Button>
@@ -156,5 +186,5 @@ function CompetitorCard({
         </div>
       </CardContent>
     </Card>
-  );
+  )
 }

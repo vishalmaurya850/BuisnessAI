@@ -271,16 +271,16 @@ export async function discoverCompetitors(business: BusinessData): Promise<Compe
 
       Format your response ONLY as a valid JSON array of objects, where each object has "name", "website", and "industry" fields. Example: [{"name": "Example Inc", "website": "https://example.com", "industry": "Tech"}]
       Do NOT include any introductory text, backticks, or the word "json". Just the array.
-    `
+    `;
 
-    // Use a reliable model name based on documentation
-    const modelName = "models/gemini-1.5-flash-latest"; // Or "models/gemini-1.5-flash-latest" etc.
+    const modelName = "models/gemini-1.5-flash-latest";
     const model = genAI.getGenerativeModel({ model: modelName });
 
     const result = await model.generateContent(prompt);
     const text = result.response.text();
 
-    const sanitizedText = text.replace(/```/g, "").trim();
+    // Sanitize the AI response
+    const sanitizedText = text.replace(/^json\s*/i, "").replace(/```/g, "").trim();
 
     // Parse the sanitized response
     let parsedResponse;
@@ -302,4 +302,4 @@ export async function discoverCompetitors(business: BusinessData): Promise<Compe
     console.error("Error discovering competitors:", error);
     throw error;
   }
-} 
+}

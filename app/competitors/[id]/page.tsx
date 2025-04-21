@@ -11,16 +11,14 @@ import { notFound } from "next/navigation"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { CompetitorScrapeButton } from "@/components/competitor-scrape-button"
+import { CompetitorCrawlButton } from "@/components/competitor-crawl-button"
+import { DeleteCompetitorDialog } from "@/components/competitors/delete-competitor-dialog"
 
-export const runtime = "nodejs";
-
-export default async function CompetitorDetailPage({
-  params,
-}: {
+export default async function CompetitorDetailPage(context: {
   params: { id: string }
 }) {
-  const resolvedParams = await params;
-  const competitorId = Number.parseInt(resolvedParams.id);
+  const params = await context.params; // Await params
+  const competitorId = Number.parseInt(params.id);
 
   if (isNaN(competitorId)) {
     notFound()
@@ -85,6 +83,8 @@ export default async function CompetitorDetailPage({
               </a>
             </Button>
             <CompetitorScrapeButton competitorId={competitor.id} />
+            <CompetitorCrawlButton competitorId={competitor.id} />
+            <DeleteCompetitorDialog competitorId={competitor.id} competitorName={competitor.name} />
           </div>
         </div>
       </div>
@@ -133,36 +133,22 @@ export default async function CompetitorDetailPage({
       <Tabs defaultValue="all" className="mb-8">
         <TabsList>
           <TabsTrigger value="all">All Ads</TabsTrigger>
-          <TabsTrigger value="facebook">Facebook</TabsTrigger>
-          <TabsTrigger value="instagram">Instagram</TabsTrigger>
-          <TabsTrigger value="google">Google</TabsTrigger>
+          {Object.keys(adsByPlatform).map((platform) => (
+            <TabsTrigger key={platform} value={platform}>
+              {platform.charAt(0).toUpperCase() + platform.slice(1)}
+            </TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value="all" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {competitorAds.length > 0 ? (
-              competitorAds.map((ad) => (
-                <AdCard
-                  key={ad.id}
-                  ad={{
-                    ...ad,
-                    firstSeen: ad.firstSeen.toISOString(),
-                    mediaUrl: ad.mediaUrl ?? undefined, // Convert null to undefined
-                    type: ad.type === "image" || ad.type === "video" || ad.type === "text" ? ad.type : "text",
-                    aiAnalysis: ad.aiAnalysis as {
-                      emotion?: string
-                      tone?: string
-                      message?: string
-                      rawAnalysis?: string
-                    } | undefined,
-                    landingPage: ad.landingPage ?? undefined,
-                  }}
-                  competitorName={competitor.name}
-                />
-              ))
+              competitorAds.map((ad) => <AdCard key={ad.id} ad={ad} competitorName={competitor.name} />)
             ) : (
               <div className="col-span-3 text-center py-10">
                 <p className="text-muted-foreground">No ads found for this competitor.</p>
-                <p className="text-sm text-muted-foreground mt-2">Click &quot;Scrape Now&quot; to fetch the latest ads.</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Click &quotScrape&quot Now or &quotCrawl Website&quot to fetch the latest ads.
+                </p>
               </div>
             )}
           </div>
@@ -173,23 +159,7 @@ export default async function CompetitorDetailPage({
               {competitorAds
                 .filter((ad) => ad.platform === platform)
                 .map((ad) => (
-                  <AdCard
-                  key={ad.id}
-                  ad={{
-                    ...ad,
-                    firstSeen: ad.firstSeen.toISOString(),
-                    mediaUrl: ad.mediaUrl ?? undefined, // Convert null to undefined
-                    type: ad.type === "image" || ad.type === "video" || ad.type === "text" ? ad.type : "text",
-                    aiAnalysis: ad.aiAnalysis as {
-                      emotion?: string
-                      tone?: string
-                      message?: string
-                      rawAnalysis?: string
-                    } | undefined,
-                    landingPage: ad.landingPage ?? undefined,
-                  }}
-                  competitorName={competitor.name}
-                />
+                  <AdCard key={ad.id} ad={ad} competitorName={competitor.name} />
                 ))}
             </div>
           </TabsContent>
@@ -218,22 +188,7 @@ function AdCard({
   ad,
   competitorName,
 }: {
-  ad: {
-    id: number
-    platform: string
-    firstSeen: string
-    mediaUrl?: string
-    type: "image" | "video" | "text"
-    content: string
-    isActive: boolean
-    aiAnalysis?: {
-      emotion?: string
-      tone?: string
-      message?: string
-      rawAnalysis?: string
-    }
-    landingPage?: string
-  }
+  ad: any
   competitorName: string
 }) {
   return (

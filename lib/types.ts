@@ -109,7 +109,7 @@ export interface ScrapingResult {
 }
 
 export interface ScrapedAd {
-  type: AdType
+  type: string | AdType
   content: string
   mediaUrl?: string
   landingPage?: string

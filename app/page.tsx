@@ -38,7 +38,7 @@ export default async function Home() {
               <span className="text-primary">AI-Powered</span> Competitor Analysis
             </h1>
             <p className="text-xl text-muted-foreground max-w-3xl mb-10">
-              Monitor your competitors' marketing activities in real-time. Get insights on ads, campaigns, and
+              Monitor your competitors marketing activities in real-time. Get insights on ads, campaigns, and
               strategies with our advanced AI analysis.
             </p>
             <Link href="/sign-up">

@@ -85,6 +85,7 @@ export async function POST(request: Request) {
     const newAlert = await db
       .insert(alerts)
       .values({
+        userId,
         businessId,
         competitorId: body.competitorId,
         type: body.type,

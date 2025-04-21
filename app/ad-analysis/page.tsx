@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { db } from "@/lib/db"
 import { ads } from "@/lib/db/schema"
-import { eq, desc } from "drizzle-orm"
+import { desc } from "drizzle-orm"
 
 export default async function AdAnalysisPage() {
   // Fetch ads from the database

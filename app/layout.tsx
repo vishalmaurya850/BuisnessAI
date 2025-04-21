@@ -1,4 +1,5 @@
 import type React from "react"
+import type { Metadata } from "next"
 import { ClerkProvider } from "@clerk/nextjs"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
@@ -7,7 +8,7 @@ import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"] })
 
-export const metadata = {
+export const metadata:Metadata = {
   title: "CompetitorAI - AI-Powered Competitor Analysis",
   description: "Monitor and analyze your competitors' marketing activities with AI",
 }

@@ -111,13 +111,17 @@ export async function POST(request: Request) {
     const result = await model.generateContent(prompt);
     const text = result.response.text();
 
+    // Sanitize the AI response
+    const sanitizedText = text.replace(/```json|```/g, "").trim();
+
     // Parse the AI response
     let aiResponse: InsightData;
 
     try {
-      aiResponse = JSON.parse(text) as InsightData;
+      aiResponse = JSON.parse(sanitizedText) as InsightData;
     } catch (e) {
       console.error("Error parsing AI response:", e);
+      console.error("Raw text:", sanitizedText);
       return NextResponse.json({ error: "Failed to parse AI response" }, { status: 500 });
     }
 

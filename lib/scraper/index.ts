@@ -5,10 +5,11 @@ import { analyzeAdContent } from "@/lib/ai"
 import { eq } from "drizzle-orm"
 import { createAlert } from "@/lib/alerts"
 import type { AdType, Platform, ScrapingResult, ScrapedAd } from "@/lib/types"
+import { crawlCompetitorWebsite } from "./website-crawler"
 
 export const runtime = "nodejs"
 
-// Browser configuration
+// Browser configuration with enhanced anti-detection settings
 const BROWSER_CONFIG = {
   headless: true,
   args: [
@@ -30,6 +31,9 @@ const BROWSER_CONFIG = {
     "--mute-audio",
     "--no-first-run",
     "--safebrowsing-disable-auto-update",
+    // Additional args to help with anti-bot detection
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
   ],
   ignoreHTTPSErrors: true,
   timeout: 60000,
@@ -39,8 +43,15 @@ const BROWSER_CONFIG = {
 let browser: Browser | null = null
 
 async function getBrowser(): Promise<Browser> {
-  if (!browser) {
-    browser = await chromium.launch(BROWSER_CONFIG)
+  if (!browser || !browser.isConnected()) {
+    try {
+      browser = await chromium.launch(BROWSER_CONFIG)
+    } catch (error) {
+      console.error("Error launching browser:", error)
+      // Force a new browser instance
+      browser = null
+      browser = await chromium.launch(BROWSER_CONFIG)
+    }
   }
   return browser
 }
@@ -48,9 +59,19 @@ async function getBrowser(): Promise<Browser> {
 // Create a stealth context to avoid detection
 async function createStealthContext(): Promise<BrowserContext> {
   const browser = await getBrowser()
+
+  // Rotate user agents to avoid detection
+  const userAgents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+  ]
+
+  const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
+
   return await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    userAgent: randomUserAgent,
     viewport: { width: 1920, height: 1080 },
     deviceScaleFactor: 1,
     hasTouch: false,
@@ -60,28 +81,68 @@ async function createStealthContext(): Promise<BrowserContext> {
     geolocation: { longitude: -73.935242, latitude: 40.73061 },
     permissions: ["geolocation"],
     javaScriptEnabled: true,
+    // Add extra HTTP headers to appear more like a real browser
+    extraHTTPHeaders: {
+      "Accept-Language": "en-US,en;q=0.9",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "sec-ch-ua": '"Chromium";v="123", "Google Chrome";v="123"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+    },
   })
 }
 
-// Retry mechanism for async functions
+// Safe page evaluation that handles errors
+async function safeEvaluate<T>(page: any, fn: () => T, defaultValue: T): Promise<T> {
+  try {
+    return await page.evaluate(fn)
+  } catch (error) {
+    console.error("Error during page evaluation:", error)
+    return defaultValue
+  }
+}
+
+// Retry mechanism with exponential backoff
 async function retry<T>(
   fn: () => Promise<T>,
-  options: { retries: number; delay: number; onRetry?: (attempt: number, error: Error) => void },
+  options: {
+    retries: number
+    initialDelay: number
+    maxDelay?: number
+    factor?: number
+    onRetry?: (attempt: number, error: Error, delay: number) => void
+  },
 ): Promise<T> {
-  const { retries, delay, onRetry } = options
+  const { retries, initialDelay, maxDelay = 30000, factor = 2, onRetry } = options
   let lastError: Error
+  let delay = initialDelay
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await fn()
     } catch (error) {
       lastError = error as Error
-      if (onRetry) onRetry(attempt + 1, lastError)
+
+      // Calculate next delay with exponential backoff
+      delay = Math.min(delay * factor, maxDelay)
+
+      if (onRetry) onRetry(attempt + 1, lastError, delay)
+
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
 
   throw lastError!
+}
+
+// Safe selector waiting that doesn't throw if not found
+async function waitForSelectorSafe(page: any, selector: string, options: { timeout: number }): Promise<boolean> {
+  try {
+    await page.waitForSelector(selector, options)
+    return true
+  } catch (error) {
+    return false
+  }
 }
 
 export async function scrapeCompetitor(competitorId: number): Promise<ScrapingResult> {
@@ -97,13 +158,6 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
 
     console.log(`Starting scrape for competitor: ${competitor.name}`)
 
-    // Determine which platforms to scrape
-    const platforms: Platform[] = []
-    if (competitor.trackFacebook) platforms.push("facebook")
-    if (competitor.trackGoogle) platforms.push("google")
-    if (competitor.trackInstagram) platforms.push("instagram")
-    if (competitor.trackLinkedIn) platforms.push("linkedin")
-
     // Initialize results
     const results: Record<Platform, ScrapedAd[]> = {
       facebook: [],
@@ -115,8 +169,15 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
       other: [],
     }
 
-    // Scrape each platform with concurrent execution
-    const scrapePromises = platforms.map(async (platform) => {
+    // First, try to scrape from ad platforms
+    const platforms: Platform[] = []
+    if (competitor.trackFacebook) platforms.push("facebook")
+    if (competitor.trackGoogle) platforms.push("google")
+    if (competitor.trackInstagram) platforms.push("instagram")
+    if (competitor.trackLinkedIn) platforms.push("linkedin")
+
+    // Scrape each platform sequentially to avoid browser resource issues
+    for (const platform of platforms) {
       console.log(`Scraping ${platform} for ${competitor.name}`)
       try {
         switch (platform) {
@@ -135,11 +196,21 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
         }
       } catch (platformError) {
         console.error(`Error scraping ${platform} for ${competitor.name}:`, platformError)
+        // Continue with other platforms even if one fails
       }
-    })
 
-    // Wait for all scraping tasks to complete
-    await Promise.all(scrapePromises)
+      // Add a delay between platform scraping to avoid detection
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+
+    // Now, crawl the competitor's website directly
+    console.log(`Crawling website for ${competitor.name}`)
+    try {
+      const websiteAds = await crawlCompetitorWebsite(competitorId, 15) // Crawl up to 15 pages
+      results.other = websiteAds
+    } catch (crawlError) {
+      console.error(`Error crawling website for ${competitor.name}:`, crawlError)
+    }
 
     // Process and store results
     await processScrapedData(competitorId, results)
@@ -160,20 +231,30 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
   } finally {
     // Close the browser to free resources
     if (browser) {
-      await browser.close()
+      try {
+        await browser.close()
+      } catch (error) {
+        console.error("Error closing browser:", error)
+      }
       browser = null
     }
   }
 }
 
 async function scrapeFacebookAds(competitorName: string): Promise<ScrapedAd[]> {
-  const context = await createStealthContext()
-  const page = await context.newPage()
+  let context: BrowserContext | null = null
+  let page: any = null
 
   try {
+    context = await createStealthContext()
+    page = await context.newPage()
+
     // Set a shorter navigation timeout
     page.setDefaultNavigationTimeout(30000)
     page.setDefaultTimeout(30000)
+
+    // Add random mouse movements to appear more human-like
+    await page.mouse.move(100 + Math.random() * 100, 100 + Math.random() * 100)
 
     // Navigate directly to the Facebook Ad Library with the search query
     const encodedName = encodeURIComponent(competitorName)
@@ -182,49 +263,52 @@ async function scrapeFacebookAds(competitorName: string): Promise<ScrapedAd[]> {
     })
 
     // Handle cookie consent if it appears
-    try {
-      await page.waitForSelector('button[data-testid="cookie-policy-manage-dialog-accept-button"]', { timeout: 5000 })
+    const hasCookieDialog = await waitForSelectorSafe(
+      page,
+      'button[data-testid="cookie-policy-manage-dialog-accept-button"]',
+      { timeout: 5000 },
+    )
+
+    if (hasCookieDialog) {
       await page.click('button[data-testid="cookie-policy-manage-dialog-accept-button"]')
-    } catch {
-      console.log("No cookie dialog appeared")
     }
 
     // Check if we need to log in or if we can proceed
-    const isLoginPage = await page.evaluate(() => {
-      return document.body.textContent?.includes("Log in to Facebook") || false
-    })
+    const isLoginPage = await safeEvaluate(
+      page,
+      () => document.body.textContent?.includes("Log in to Facebook") || false,
+      false,
+    )
 
     if (isLoginPage) {
       console.log("Facebook requires login. Using alternative scraping method...")
       // Use an alternative approach that doesn't require login
-      return await scrapeFacebookAdsAlternative(competitorName, page)
+      return await scrapeFacebookAdsAlternative(competitorName)
     }
 
     // Wait for results to load with a more reliable selector
-    try {
-      await retry(
-        async () => {
-          await page.waitForSelector('div[role="main"] div[role="article"]', { timeout: 20000 })
-        },
-        {
-          retries: 3,
-          delay: 2000,
-          onRetry: (attempt, error) => console.log(`Retry ${attempt} waiting for Facebook ads: ${error.message}`),
-        },
-      )
-    } catch (error) {
+    const hasResults = await waitForSelectorSafe(
+      page,
+      'div[role="main"] div[role="article"], .adLibraryCard, [data-testid="ad_card"]',
+      { timeout: 15000 },
+    )
+
+    if (!hasResults) {
       console.log("Could not find ad cards. Checking for no results message...")
 
-      const noResults = await page.evaluate(() => {
-        return document.body.textContent?.includes("No ads found for") || false
-      })
+      const noResults = await safeEvaluate(
+        page,
+        () => document.body.textContent?.includes("No ads found for") || false,
+        false,
+      )
 
       if (noResults) {
         console.log("No ads found for this competitor on Facebook")
         return []
       }
 
-      throw error
+      // If we can't find ads and there's no "no results" message, try the alternative method
+      return await scrapeFacebookAdsAlternative(competitorName)
     }
 
     // Scroll to load more ads (up to 3 times)
@@ -234,574 +318,669 @@ async function scrapeFacebookAds(competitorName: string): Promise<ScrapedAd[]> {
     }
 
     // Extract ad data with a more robust selector strategy
-    const ads = await page.evaluate(() => {
-      const adCards = Array.from(document.querySelectorAll('div[role="article"]'))
+    const ads = await safeEvaluate(
+      page,
+      () => {
+        // Try multiple selectors to find ad cards
+        const selectors = ['div[role="article"]', ".adLibraryCard", '[data-testid="ad_card"]', ".x1i10hfl"]
 
-      return adCards.map((card) => {
-        // Determine ad type
-        let type = "text"
-        if (card.querySelector("video")) {
-          type = "video"
-        } else if (card.querySelector("img:not([alt*='profile'])")) {
-          type = "image"
-        }
+        let adCards: Element[] = []
 
-        // Extract content with fallbacks
-        const contentSelectors = [
-          ".adLibraryTextContent",
-          "div[data-ad-preview='message']",
-          "div[data-testid='ad-text']",
-          "div.x1iorvi4",
-        ]
-
-        let content = ""
-        for (const selector of contentSelectors) {
-          const element = card.querySelector(selector)
-          if (element && element.textContent) {
-            content = element.textContent.trim()
+        for (const selector of selectors) {
+          const elements = Array.from(document.querySelectorAll(selector))
+          if (elements.length > 0) {
+            adCards = elements
             break
           }
         }
 
-        // Extract media URL
-        let mediaUrl = ""
-        if (type === "image") {
-          const img = card.querySelector("img:not([alt*='profile'])")
-          mediaUrl = img?.getAttribute("src") || ""
-        } else if (type === "video") {
-          mediaUrl = card.querySelector("video")?.getAttribute("src") || ""
-        }
+        return adCards.map((card) => {
+          // Determine ad type
+          let type = "text"
+          if (card.querySelector("video")) {
+            type = "video"
+          } else if (card.querySelector("img:not([alt*='profile'])")) {
+            type = "image"
+          }
 
-        // Extract landing page
-        const landingPage =
-          card.querySelector('a[data-testid="ad_library_card_cta_button"], a[target="_blank"]')?.getAttribute("href") ||
-          ""
+          // Extract content with fallbacks
+          const contentSelectors = [
+            ".adLibraryTextContent",
+            "div[data-ad-preview='message']",
+            "div[data-testid='ad-text']",
+            "div.x1iorvi4",
+            ".x1lliihq",
+            "span.x193iq5w",
+          ]
 
-        // Extract date
-        const dateElement = card.querySelector(".adLibraryStartDate, div[data-testid='ad-date']")
-        const dateText = dateElement?.textContent || ""
-        const dateMatch = dateText.match(/Started running on (.+)|Started (.+) ago/)
-        const firstSeen = dateMatch ? new Date() : new Date()
+          let content = ""
+          for (const selector of contentSelectors) {
+            const element = card.querySelector(selector)
+            if (element && element.textContent) {
+              content = element.textContent.trim()
+              break
+            }
+          }
 
-        return {
-          type,
-          content,
-          mediaUrl,
-          landingPage,
-          firstSeen: firstSeen.toISOString(),
-          isActive: true,
-        }
-      })
-    })
+          // If no content found, get all text
+          if (!content) {
+            content = card.textContent?.trim() || ""
+          }
+
+          // Extract media URL
+          let mediaUrl = ""
+          if (type === "image") {
+            const img = card.querySelector("img:not([alt*='profile'])")
+            mediaUrl = img?.getAttribute("src") || ""
+          } else if (type === "video") {
+            mediaUrl = card.querySelector("video")?.getAttribute("src") || ""
+          }
+
+          // Extract landing page
+          const landingPage =
+            card
+              .querySelector('a[data-testid="ad_library_card_cta_button"], a[target="_blank"]')
+              ?.getAttribute("href") || ""
+
+          // Extract date
+          const dateElement = card.querySelector(".adLibraryStartDate, div[data-testid='ad-date']")
+          const dateText = dateElement?.textContent || ""
+          const dateMatch = dateText.match(/Started running on (.+)|Started (.+) ago/)
+          const firstSeen = dateMatch ? new Date() : new Date()
+
+          return {
+            type,
+            content,
+            mediaUrl,
+            landingPage,
+            firstSeen: firstSeen.toISOString(),
+            isActive: true,
+          }
+        })
+      },
+      [],
+    )
 
     return ads as ScrapedAd[]
   } catch (error) {
     console.error("Error scraping Facebook ads:", error)
-    return []
+    // Try alternative method if primary method fails
+    return await scrapeFacebookAdsAlternative(competitorName)
   } finally {
-    await page.close()
-    await context.close()
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
   }
 }
 
 // Alternative method for Facebook when login is required
-async function scrapeFacebookAdsAlternative(competitorName: string, page: any): Promise<ScrapedAd[]> {
+async function scrapeFacebookAdsAlternative(competitorName: string): Promise<ScrapedAd[]> {
+  let context: BrowserContext | null = null
+  let page: any = null
+
   try {
-    // Try to extract any visible ad information even from the login page
-    // Sometimes Facebook shows limited ad info even without login
-    const limitedAds = await page.evaluate(() => {
-      const adElements = Array.from(document.querySelectorAll('div[role="article"], .adLibraryCard'))
+    context = await createStealthContext()
+    page = await context.newPage()
 
-      return adElements.map((card) => {
-        const content = card.textContent?.trim() || ""
+    // Set shorter timeouts
+    page.setDefaultNavigationTimeout(30000)
+    page.setDefaultTimeout(30000)
 
-        return {
-          type: "text",
-          content: content.substring(0, 500), // Limit content length
-          mediaUrl: "",
-          landingPage: "",
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
+    // Use Google to find Facebook ads
+    await page.goto(
+      `https://www.google.com/search?q=${encodeURIComponent(`${competitorName} facebook ads OR marketing`)}`,
+      {
+        waitUntil: "domcontentloaded",
+      },
+    )
 
-    if (limitedAds.length > 0) {
-      console.log(`Found ${limitedAds.length} ads with limited information`)
-      return limitedAds as ScrapedAd[]
+    // Wait for search results with a more reliable approach
+    const hasResults = await waitForSelectorSafe(page, "#search", { timeout: 15000 })
+
+    if (!hasResults) {
+      console.log("Google search results not found, returning empty array")
+      return []
     }
 
-    // If no ads found, try a different approach using Google search
-    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(`${competitorName} facebook ads`)}`, {
-      waitUntil: "domcontentloaded",
-    })
-
-    await page.waitForSelector("#search", { timeout: 20000 })
-
     // Extract potential ad information from Google search results
-    const searchResults = await page.evaluate(() => {
-      const results = Array.from(document.querySelectorAll(".g"))
+    const searchResults = await safeEvaluate(
+      page,
+      () => {
+        const results = Array.from(document.querySelectorAll(".g"))
 
-      return results.slice(0, 5).map((result) => {
-        const title = result.querySelector("h3")?.textContent || ""
-        const snippet = result.querySelector(".VwiC3b")?.textContent || ""
+        return results.slice(0, 8).map((result) => {
+          const title = result.querySelector("h3")?.textContent || ""
+          const snippet = result.querySelector(".VwiC3b")?.textContent || ""
+          const link = result.querySelector("a")?.href || ""
 
-        return {
-          type: "text",
-          content: `${title} - ${snippet}`,
-          mediaUrl: "",
-          landingPage: result.querySelector("a")?.href || "",
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
+          return {
+            type: "text",
+            content: `${title} - ${snippet}`,
+            mediaUrl: "",
+            landingPage: link,
+            firstSeen: new Date().toISOString(),
+            isActive: true,
+          }
+        })
+      },
+      [],
+    )
 
+    // Filter results to only include relevant Facebook ad content
     return searchResults.filter(
       (ad: ScrapedAd) =>
         ad.content.toLowerCase().includes("ad") ||
         ad.content.toLowerCase().includes("campaign") ||
-        ad.content.toLowerCase().includes("facebook"),
+        ad.content.toLowerCase().includes("facebook") ||
+        ad.content.toLowerCase().includes("marketing") ||
+        (ad.landingPage && ad.landingPage.includes("facebook.com")),
     ) as ScrapedAd[]
   } catch (error) {
     console.error("Error in Facebook alternative scraping:", error)
     return []
+  } finally {
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
   }
 }
 
 async function scrapeGoogleAds(competitorName: string): Promise<ScrapedAd[]> {
-  const context = await createStealthContext()
-  const page = await context.newPage()
+  let context: BrowserContext | null = null
+  let page: any = null
 
   try {
+    context = await createStealthContext()
+    page = await context.newPage()
+
     // Set shorter timeouts
     page.setDefaultNavigationTimeout(30000)
     page.setDefaultTimeout(30000)
 
-    // Navigate directly to Google Ads Transparency Center with the search query
-    const encodedName = encodeURIComponent(competitorName)
-    await page.goto(`https://adstransparency.google.com/advertiser/${encodedName}?region=anywhere`, {
-      waitUntil: "domcontentloaded",
-    })
-
-    // Check if we landed on the search page instead of direct results
-    const isSearchPage = await page.evaluate(() => {
-      return document.querySelector('input[aria-label="Search for an advertiser"]') !== null
-    })
-
-    if (isSearchPage) {
-      // Fill the search input and submit
-      await page.fill('input[aria-label="Search for an advertiser"]', competitorName)
-      await page.keyboard.press("Enter")
-      await page.waitForTimeout(3000)
-    }
-
-    // Wait for results with retry
+    // Try direct approach first
     try {
-      await retry(
-        async () => {
-          await page.waitForSelector(".advertiser-card, .ad-card, mat-card", { timeout: 20000 })
-        },
-        {
-          retries: 3,
-          delay: 2000,
-          onRetry: (attempt, error) => console.log(`Retry ${attempt} waiting for Google ads: ${error.message}`),
-        },
+      // Navigate directly to Google Ads Transparency Center with the search query
+      const encodedName = encodeURIComponent(competitorName)
+      await page.goto(`https://adstransparency.google.com/advertiser/${encodedName}?region=anywhere`, {
+        waitUntil: "domcontentloaded",
+      })
+
+      // Check if we landed on the search page instead of direct results
+      const isSearchPage = await safeEvaluate(
+        page,
+        () => document.querySelector('input[aria-label="Search for an advertiser"]') !== null,
+        false,
       )
-    } catch (error) {
-      // Check if no results
-      const noResults = await page.evaluate(() => {
-        return (
-          document.body.textContent?.includes("No ads found") ||
-          document.body.textContent?.includes("No advertisers found") ||
-          false
+
+      if (isSearchPage) {
+        // Fill the search input and submit
+        await page.fill('input[aria-label="Search for an advertiser"]', competitorName)
+        await page.keyboard.press("Enter")
+        await page.waitForTimeout(3000)
+      }
+
+      // Wait for results with a more reliable approach
+      const hasResults = await waitForSelectorSafe(page, ".advertiser-card, .ad-card, mat-card, [role='listitem']", {
+        timeout: 15000,
+      })
+
+      if (!hasResults) {
+        // Check if no results
+        const noResults = await safeEvaluate(
+          page,
+          () => {
+            return (
+              document.body.textContent?.includes("No ads found") ||
+              document.body.textContent?.includes("No advertisers found") ||
+              false
+            )
+          },
+          false,
         )
-      })
 
-      if (noResults) {
-        console.log("No ads found for this competitor on Google")
-        return []
+        if (noResults) {
+          console.log("No ads found for this competitor on Google")
+          return []
+        }
+
+        // If we can't find ads and there's no "no results" message, try the alternative method
+        throw new Error("Could not find Google ad cards, trying alternative method")
       }
 
-      throw error
-    }
-
-    // Scroll to load more ads
-    for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
-      await page.waitForTimeout(1000)
-    }
-
-    // Extract ad data with multiple selector strategies
-    const ads = await page.evaluate(() => {
-      // Try different selectors for ad cards
-      const selectors = [".advertiser-card", ".ad-card", "mat-card", "[role='listitem']"]
-      let adCards: Element[] = []
-
-      for (const selector of selectors) {
-        const elements = Array.from(document.querySelectorAll(selector))
-        if (elements.length > 0) {
-          adCards = elements
-          break
-        }
+      // Scroll to load more ads
+      for (let i = 0; i < 3; i++) {
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+        await page.waitForTimeout(1000)
       }
 
-      return adCards.map((card) => {
-        // Try different selectors for content
-        const contentSelectors = [".ad-text", ".ad-content", ".ad-creative-text", "p", "div.text-content"]
-        let content = ""
+      // Extract ad data with multiple selector strategies
+      const ads = await safeEvaluate(
+        page,
+        () => {
+          // Try different selectors for ad cards
+          const selectors = [".advertiser-card", ".ad-card", "mat-card", "[role='listitem']"]
+          let adCards: Element[] = []
 
-        for (const selector of contentSelectors) {
-          const element = card.querySelector(selector)
-          if (element && element.textContent) {
-            content = element.textContent.trim()
-            break
+          for (const selector of selectors) {
+            const elements = Array.from(document.querySelectorAll(selector))
+            if (elements.length > 0) {
+              adCards = elements
+              break
+            }
           }
-        }
 
-        // If no content found, get all text
-        if (!content) {
-          content = card.textContent?.trim() || ""
-        }
+          return adCards.map((card) => {
+            // Try different selectors for content
+            const contentSelectors = [".ad-text", ".ad-content", ".ad-creative-text", "p", "div.text-content"]
+            let content = ""
 
-        // Try different selectors for landing page
-        const linkSelectors = ["a.ad-destination", "a[target='_blank']", "a.destination-url", "a"]
-        let landingPage = ""
+            for (const selector of contentSelectors) {
+              const element = card.querySelector(selector)
+              if (element && element.textContent) {
+                content = element.textContent.trim()
+                break
+              }
+            }
 
-        for (const selector of linkSelectors) {
-          const element = card.querySelector(selector)
-          if (element) {
-            landingPage = element.getAttribute("href") || ""
-            break
-          }
-        }
+            // If no content found, get all text
+            if (!content) {
+              content = card.textContent?.trim() || ""
+            }
 
-        // Try different selectors for date
-        const dateSelectors = [".ad-date", ".date-range", ".timestamp", "time"]
-        let dateText = ""
+            // Try different selectors for landing page
+            const linkSelectors = ["a.ad-destination", "a[target='_blank']", "a.destination-url", "a"]
+            let landingPage = ""
 
-        for (const selector of dateSelectors) {
-          const element = card.querySelector(selector)
-          if (element && element.textContent) {
-            dateText = element.textContent.trim()
-            break
-          }
-        }
+            for (const selector of linkSelectors) {
+              const element = card.querySelector(selector)
+              if (element) {
+                landingPage = element.getAttribute("href") || ""
+                break
+              }
+            }
 
-        const firstSeen = dateText ? new Date(dateText) : new Date()
+            // Try different selectors for date
+            const dateSelectors = [".ad-date", ".date-range", ".timestamp", "time"]
+            let dateText = ""
 
-        return {
-          type: "text",
-          content,
-          mediaUrl: "",
-          landingPage,
-          firstSeen: firstSeen.toISOString(),
-          isActive: true,
-        }
-      })
-    })
+            for (const selector of dateSelectors) {
+              const element = card.querySelector(selector)
+              if (element && element.textContent) {
+                dateText = element.textContent.trim()
+                break
+              }
+            }
 
-    return ads as ScrapedAd[]
+            const firstSeen = dateText ? new Date(dateText) : new Date()
+
+            return {
+              type: "text",
+              content,
+              mediaUrl: "",
+              landingPage,
+              firstSeen: firstSeen.toISOString(),
+              isActive: true,
+            }
+          })
+        },
+        [],
+      )
+
+      return ads as ScrapedAd[]
+    } catch (directError) {
+      console.error("Direct Google Ads scraping failed:", directError)
+      // Fall back to alternative method
+      return await scrapeGoogleAdsAlternative(competitorName)
+    }
   } catch (error) {
     console.error("Error scraping Google ads:", error)
+    return await scrapeGoogleAdsAlternative(competitorName)
+  } finally {
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
+  }
+}
+
+// Alternative method for Google Ads
+async function scrapeGoogleAdsAlternative(competitorName: string): Promise<ScrapedAd[]> {
+  let context: BrowserContext | null = null
+  let page: any = null
+
+  try {
+    context = await createStealthContext()
+    page = await context.newPage()
+
+    // Set shorter timeouts
+    page.setDefaultNavigationTimeout(30000)
+    page.setDefaultTimeout(30000)
+
+    // Use Google search to find ads
+    await page.goto(
+      `https://www.google.com/search?q=${encodeURIComponent(`${competitorName} ads OR "sponsored" OR "advertisement"`)}`,
+      {
+        waitUntil: "domcontentloaded",
+      },
+    )
+
+    // Wait for search results with a more reliable approach
+    const hasResults = await waitForSelectorSafe(page, "#search", { timeout: 15000 })
+
+    if (!hasResults) {
+      console.log("Google search results not found, returning empty array")
+      return []
+    }
+
+    // Look for sponsored results first
+    const hasSponsored = await waitForSelectorSafe(page, ".uEierd", { timeout: 5000 })
+
+    if (hasSponsored) {
+      // Extract sponsored ad information
+      const sponsoredAds = await safeEvaluate(
+        page,
+        () => {
+          const sponsored = Array.from(document.querySelectorAll(".uEierd"))
+
+          return sponsored.map((ad) => {
+            const title = ad.querySelector("div.v5yQqb")?.textContent || ad.querySelector("h3")?.textContent || ""
+            const description = ad.querySelector(".MUxGbd")?.textContent || ""
+            const link = ad.querySelector("a")?.href || ""
+
+            return {
+              type: "text",
+              content: `${title} - ${description}`,
+              mediaUrl: "",
+              landingPage: link,
+              firstSeen: new Date().toISOString(),
+              isActive: true,
+            }
+          })
+        },
+        [],
+      )
+
+      if (sponsoredAds.length > 0) {
+        return sponsoredAds as ScrapedAd[]
+      }
+    }
+
+    // Extract regular search results as fallback
+    const searchResults = await safeEvaluate(
+      page,
+      () => {
+        const results = Array.from(document.querySelectorAll(".g"))
+
+        return results.slice(0, 8).map((result) => {
+          const title = result.querySelector("h3")?.textContent || ""
+          const snippet = result.querySelector(".VwiC3b")?.textContent || ""
+          const link = result.querySelector("a")?.href || ""
+
+          return {
+            type: "text",
+            content: `${title} - ${snippet}`,
+            mediaUrl: "",
+            landingPage: link,
+            firstSeen: new Date().toISOString(),
+            isActive: true,
+          }
+        })
+      },
+      [],
+    )
+
+    // Filter results to only include relevant ad content
+    return searchResults.filter(
+      (ad: ScrapedAd) =>
+        ad.content.toLowerCase().includes("ad") ||
+        ad.content.toLowerCase().includes("sponsored") ||
+        ad.content.toLowerCase().includes("advertisement") ||
+        ad.content.toLowerCase().includes("campaign"),
+    ) as ScrapedAd[]
+  } catch (error) {
+    console.error("Error in Google alternative scraping:", error)
     return []
   } finally {
-    await page.close()
-    await context.close()
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
   }
 }
 
 async function scrapeInstagramAds(competitorName: string): Promise<ScrapedAd[]> {
-  const context = await createStealthContext()
-  const page = await context.newPage()
+  // Skip direct Instagram scraping as it consistently fails with login requirements
+  // Go straight to the alternative method which is more reliable
+  return await scrapeInstagramAlternative(competitorName)
+}
+
+async function scrapeInstagramAlternative(competitorName: string): Promise<ScrapedAd[]> {
+  let context: BrowserContext | null = null
+  let page: any = null
 
   try {
+    context = await createStealthContext()
+    page = await context.newPage()
+
     // Set shorter timeouts
     page.setDefaultNavigationTimeout(30000)
     page.setDefaultTimeout(30000)
 
-    // Navigate directly to Instagram with the search query
-    await page.goto("https://www.instagram.com/", { waitUntil: "domcontentloaded" })
+    // Use Google to find Instagram posts
+    await page.goto(
+      `https://www.google.com/search?q=${encodeURIComponent(`${competitorName} instagram sponsored OR "paid partnership" OR ad`)}`,
+      {
+        waitUntil: "domcontentloaded",
+      },
+    )
 
-    // Handle cookie consent if it appears
-    try {
-      await page.waitForSelector('button[data-testid="cookie-policy-manage-dialog-accept-button"]', { timeout: 5000 })
-      await page.click('button[data-testid="cookie-policy-manage-dialog-accept-button"]')
-    } catch {
-      console.log("No cookie dialog appeared")
-    }
+    // Wait for search results with a more reliable approach
+    const hasResults = await waitForSelectorSafe(page, "#search", { timeout: 15000 })
 
-    // Check if login is required
-    const isLoginPage = await page.evaluate(() => {
-      return document.body.textContent?.includes("Log in") || document.body.textContent?.includes("Sign up") || false
-    })
-
-    if (isLoginPage) {
-      console.log("Instagram requires login. Using alternative scraping method...")
-      return await scrapeInstagramAlternative(competitorName, page)
-    }
-
-    // Search for the competitor
-    try {
-      await page.waitForSelector('input[placeholder="Search"], input[aria-label="Search"]', { timeout: 10000 })
-      await page.fill('input[placeholder="Search"], input[aria-label="Search"]', competitorName)
-      await page.waitForTimeout(2000)
-      await page.keyboard.press("Enter")
-    } catch (error) {
-      console.log("Could not find search input, trying alternative method")
-      return await scrapeInstagramAlternative(competitorName, page)
-    }
-
-    // Wait for search results
-    try {
-      await page.waitForSelector('a[href*="/explore/search/"]', { timeout: 10000 })
-      await page.click('a[href*="/explore/search/"]')
-    } catch {
-      console.log("Could not find search results link")
-    }
-
-    // Try to find and click on the profile
-    try {
-      const profileSelector = `a[href^="/${competitorName.toLowerCase().replace(/\s+/g, "")}"]`
-      await page.waitForSelector(profileSelector, { timeout: 10000 })
-      await page.click(profileSelector)
-    } catch {
-      console.log("Could not find profile link")
-    }
-
-    // Wait for profile to load
-    try {
-      await page.waitForSelector("article", { timeout: 10000 })
-    } catch {
-      console.log("Could not find articles on profile")
+    if (!hasResults) {
+      console.log("Google search results not found for Instagram alternative, returning empty array")
       return []
     }
 
-    // Extract posts
-    const posts = await page.evaluate(() => {
-      const articles = Array.from(document.querySelectorAll("article"))
-
-      return articles.map((article) => {
-        let type = "image"
-        if (article.querySelector("video")) {
-          type = "video"
-        }
-
-        const content = article.querySelector(".caption")?.textContent?.trim() || article.textContent?.trim() || ""
-
-        const mediaUrl =
-          type === "image"
-            ? article.querySelector("img")?.getAttribute("src") || ""
-            : article.querySelector("video")?.getAttribute("src") || ""
-
-        return {
-          type,
-          content,
-          mediaUrl,
-          landingPage: "",
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
-
-    return posts as ScrapedAd[]
-  } catch (error) {
-    console.error("Error scraping Instagram:", error)
-    return []
-  } finally {
-    await page.close()
-    await context.close()
-  }
-}
-
-async function scrapeInstagramAlternative(competitorName: string, page: any): Promise<ScrapedAd[]> {
-  try {
-    // Use Google to find Instagram posts
-    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(`${competitorName} instagram ads`)}`, {
-      waitUntil: "domcontentloaded",
-    })
-
-    await page.waitForSelector("#search", { timeout: 20000 })
-
     // Extract potential ad information from Google search results
-    const searchResults = await page.evaluate(() => {
-      const results = Array.from(document.querySelectorAll(".g"))
+    const searchResults = await safeEvaluate(
+      page,
+      () => {
+        const results = Array.from(document.querySelectorAll(".g"))
 
-      return results.slice(0, 5).map((result) => {
-        const title = result.querySelector("h3")?.textContent || ""
-        const snippet = result.querySelector(".VwiC3b")?.textContent || ""
-        const link = result.querySelector("a")?.href || ""
+        return results.slice(0, 8).map((result) => {
+          const title = result.querySelector("h3")?.textContent || ""
+          const snippet = result.querySelector(".VwiC3b")?.textContent || ""
+          const link = result.querySelector("a")?.href || ""
 
-        return {
-          type: "text",
-          content: `${title} - ${snippet}`,
-          mediaUrl: "",
-          landingPage: link,
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
+          // Try to determine if it's an image or video based on the snippet
+          let type = "text"
+          if (
+            snippet.toLowerCase().includes("video") ||
+            snippet.toLowerCase().includes("watch") ||
+            snippet.toLowerCase().includes("reel")
+          ) {
+            type = "video"
+          } else if (
+            snippet.toLowerCase().includes("photo") ||
+            snippet.toLowerCase().includes("image") ||
+            snippet.toLowerCase().includes("picture")
+          ) {
+            type = "image"
+          }
 
+          return {
+            type,
+            content: `${title} - ${snippet}`,
+            mediaUrl: "",
+            landingPage: link,
+            firstSeen: new Date().toISOString(),
+            isActive: true,
+          }
+        })
+      },
+      [],
+    )
+
+    // Filter results to only include relevant Instagram content
     return searchResults.filter(
-      (ad: ScrapedAd) => ad.content.toLowerCase().includes("instagram") || (ad.landingPage ?? "").toLowerCase().includes("instagram.com"),
+      (ad: ScrapedAd) =>
+        (ad.content.toLowerCase().includes("instagram") ||
+          (ad.landingPage && ad.landingPage.includes("instagram.com"))) &&
+        (ad.content.toLowerCase().includes("sponsored") ||
+          ad.content.toLowerCase().includes("paid partnership") ||
+          ad.content.toLowerCase().includes("ad") ||
+          ad.content.toLowerCase().includes("promotion")),
     ) as ScrapedAd[]
   } catch (error) {
     console.error("Error in Instagram alternative scraping:", error)
     return []
+  } finally {
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
   }
 }
 
 async function scrapeLinkedInAds(competitorName: string): Promise<ScrapedAd[]> {
-  const context = await createStealthContext()
-  const page = await context.newPage()
+  // Skip direct LinkedIn scraping as it consistently fails with login requirements
+  // Go straight to the alternative method which is more reliable
+  return await scrapeLinkedInAlternative(competitorName)
+}
+
+async function scrapeLinkedInAlternative(competitorName: string): Promise<ScrapedAd[]> {
+  let context: BrowserContext | null = null
+  let page: any = null
 
   try {
+    context = await createStealthContext()
+    page = await context.newPage()
+
     // Set shorter timeouts
     page.setDefaultNavigationTimeout(30000)
     page.setDefaultTimeout(30000)
 
-    // Navigate to LinkedIn
-    await page.goto("https://www.linkedin.com/", { waitUntil: "domcontentloaded" })
+    // Use Google to find LinkedIn ads
+    await page.goto(
+      `https://www.google.com/search?q=${encodeURIComponent(`${competitorName} linkedin "sponsored" OR "promoted" OR advertising`)}`,
+      {
+        waitUntil: "domcontentloaded",
+      },
+    )
 
-    // Handle cookie consent if it appears
-    try {
-      await page.waitForSelector('button[data-testid="cookie-policy-manage-dialog-accept-button"]', { timeout: 5000 })
-      await page.click('button[data-testid="cookie-policy-manage-dialog-accept-button"]')
-    } catch {
-      console.log("No cookie dialog appeared")
-    }
+    // Wait for search results with a more reliable approach
+    const hasResults = await waitForSelectorSafe(page, "#search", { timeout: 15000 })
 
-    // Check if login is required
-    const isLoginPage = await page.evaluate(() => {
-      return document.body.textContent?.includes("Sign in") || document.body.textContent?.includes("Join now") || false
-    })
-
-    if (isLoginPage) {
-      console.log("LinkedIn requires login. Using alternative scraping method...")
-      return await scrapeLinkedInAlternative(competitorName, page)
-    }
-
-    // Search for the competitor
-    try {
-      await page.waitForSelector('input[aria-label="Search"], input[placeholder="Search"]', { timeout: 10000 })
-      await page.fill('input[aria-label="Search"], input[placeholder="Search"]', competitorName)
-      await page.keyboard.press("Enter")
-    } catch {
-      console.log("Could not find search input")
-      return await scrapeLinkedInAlternative(competitorName, page)
-    }
-
-    // Try to click on the Companies tab
-    try {
-      await page.waitForSelector('button[aria-label="Companies"], a[data-control-name="search_srp_companies"]', {
-        timeout: 10000,
-      })
-      await page.click('button[aria-label="Companies"], a[data-control-name="search_srp_companies"]')
-    } catch {
-      console.log("Could not find Companies tab")
-    }
-
-    // Try to click on the first company result
-    try {
-      await page.waitForSelector(".search-result__info a, .entity-result__title a", { timeout: 10000 })
-      await page.click(".search-result__info a, .entity-result__title a")
-    } catch {
-      console.log("Could not find company result")
-      return await scrapeLinkedInAlternative(competitorName, page)
-    }
-
-    // Wait for company page to load
-    try {
-      await page.waitForSelector(".org-updates-section-container, .org-grid__content-height-enforcer", {
-        timeout: 10000,
-      })
-    } catch {
-      console.log("Could not find company updates section")
+    if (!hasResults) {
+      console.log("Google search results not found for LinkedIn alternative, returning empty array")
       return []
     }
 
-    // Extract posts
-    const posts = await page.evaluate(() => {
-      const updates = Array.from(
-        document.querySelectorAll(".org-updates-section-container .feed-shared-update-v2, .update-components-actor"),
-      )
-
-      return updates.map((update) => {
-        let type = "text"
-        if (update.querySelector("video")) {
-          type = "video"
-        } else if (update.querySelector(".feed-shared-image, .update-components-image")) {
-          type = "image"
-        }
-
-        const content =
-          update.querySelector(".feed-shared-text, .update-components-text")?.textContent?.trim() ||
-          update.textContent?.trim() ||
-          ""
-
-        const mediaUrl =
-          type === "image"
-            ? update.querySelector(".feed-shared-image img, .update-components-image img")?.getAttribute("src") || ""
-            : ""
-
-        return {
-          type,
-          content,
-          mediaUrl,
-          landingPage: "",
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
-
-    return posts as ScrapedAd[]
-  } catch (error) {
-    console.error("Error scraping LinkedIn ads:", error)
-    return []
-  } finally {
-    await page.close()
-    await context.close()
-  }
-}
-
-async function scrapeLinkedInAlternative(competitorName: string, page: any): Promise<ScrapedAd[]> {
-  try {
-    // Use Google to find LinkedIn posts
-    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(`${competitorName} linkedin ads`)}`, {
-      waitUntil: "domcontentloaded",
-    })
-
-    await page.waitForSelector("#search", { timeout: 20000 })
-
     // Extract potential ad information from Google search results
-    const searchResults = await page.evaluate(() => {
-      const results = Array.from(document.querySelectorAll(".g"))
+    const searchResults = await safeEvaluate(
+      page,
+      () => {
+        const results = Array.from(document.querySelectorAll(".g"))
 
-      return results.slice(0, 5).map((result) => {
-        const title = result.querySelector("h3")?.textContent || ""
-        const snippet = result.querySelector(".VwiC3b")?.textContent || ""
-        const link = result.querySelector("a")?.href || ""
+        return results.slice(0, 8).map((result) => {
+          const title = result.querySelector("h3")?.textContent || ""
+          const snippet = result.querySelector(".VwiC3b")?.textContent || ""
+          const link = result.querySelector("a")?.href || ""
 
-        return {
-          type: "text",
-          content: `${title} - ${snippet}`,
-          mediaUrl: "",
-          landingPage: link,
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        }
-      })
-    })
+          return {
+            type: "text",
+            content: `${title} - ${snippet}`,
+            mediaUrl: "",
+            landingPage: link,
+            firstSeen: new Date().toISOString(),
+            isActive: true,
+          }
+        })
+      },
+      [],
+    )
 
+    // Filter results to only include relevant LinkedIn ad content
     return searchResults.filter(
-      (ad: ScrapedAd) => ad.content.toLowerCase().includes("linkedin") || (ad.landingPage ?? "").toLowerCase().includes("linkedin.com"),
+      (ad: ScrapedAd) =>
+        (ad.content.toLowerCase().includes("linkedin") ||
+          (ad.landingPage && ad.landingPage.includes("linkedin.com"))) &&
+        (ad.content.toLowerCase().includes("sponsored") ||
+          ad.content.toLowerCase().includes("promoted") ||
+          ad.content.toLowerCase().includes("advertising") ||
+          ad.content.toLowerCase().includes("campaign")),
     ) as ScrapedAd[]
   } catch (error) {
     console.error("Error in LinkedIn alternative scraping:", error)
     return []
+  } finally {
+    if (page) {
+      try {
+        await page.close()
+      } catch (e) {
+        console.error("Error closing page:", e)
+      }
+    }
+    if (context) {
+      try {
+        await context.close()
+      } catch (e) {
+        console.error("Error closing context:", e)
+      }
+    }
   }
 }
 
@@ -885,7 +1064,7 @@ async function processScrapedData(competitorId: number, results: Record<Platform
               firstSeen: new Date(adData.firstSeen),
               lastSeen: new Date(),
               isActive: adData.isActive,
-              aiAnalysis: "Analysis failed",
+              aiAnalysis: { rawAnalysis: "Analysis failed" },
             })
           }
         }

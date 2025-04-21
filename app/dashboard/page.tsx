@@ -79,7 +79,7 @@ export default async function DashboardPage() {
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Monitor your competitors' marketing activities and get insights.</p>
+          <p className="text-muted-foreground">Monitor your competitors marketing activities and get insights.</p>
         </div>
         <div className="flex gap-4">
           <Link href="/competitors/add">
@@ -127,7 +127,7 @@ export default async function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle>Competitor Activity Overview</CardTitle>
-              <CardDescription>Summary of your competitors' marketing activities in the last 30 days.</CardDescription>
+              <CardDescription>Summary of your competitors marketing activities in the last 30 days.</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-[300px] flex items-center justify-center border rounded-md bg-muted/30">
@@ -273,7 +273,7 @@ export default async function DashboardPage() {
                   <div className="text-center py-10">
                     <p className="text-muted-foreground">No insights generated yet.</p>
                     <p className="text-sm text-muted-foreground mt-2">
-                      Click "Generate Insight" to create AI-powered insights.
+                      Click &quot;Generate Insight&quot; to create AI-powered insights.
                     </p>
                   </div>
                 )}
