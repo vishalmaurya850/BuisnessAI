@@ -566,7 +566,7 @@ async function scrapeGoogleAds(competitorName: string): Promise<ScrapedAd[]> {
         }
 
         // If we can't find ads and there's no "no results" message, try the alternative method
-        throw new Error("Could not find Google ad cards, trying alternative method")
+        console.log("Could not find Google ad cards, trying alternative method")
       }
 
       // Scroll to load more ads

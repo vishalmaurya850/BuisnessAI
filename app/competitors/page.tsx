@@ -5,8 +5,8 @@ import { Eye, Plus, Search } from "lucide-react"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
 import { db } from "@/lib/db"
-import { competitors } from "@/lib/db/schema"
-import { desc } from "drizzle-orm"
+import { ads, competitors } from "@/lib/db/schema"
+import { desc, eq, sql } from "drizzle-orm"
 import { DeleteCompetitorDialog } from "@/components/competitors/delete-competitor-dialog"
 
 export default async function CompetitorsPage() {
@@ -14,6 +14,9 @@ export default async function CompetitorsPage() {
   const allCompetitors = await db.query.competitors.findMany({
     orderBy: [desc(competitors.updatedAt)],
   })
+
+  // Get active ads count
+  const activeAdsCount = await db.select({ count: sql`COUNT(*)` }).from(ads).where(eq(ads.isActive, true))
 
   // Get most active competitors (those with most recent updates)
   const activeCompetitors = [...allCompetitors]
@@ -69,7 +72,7 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={10} // This would ideally be fetched from the database
+                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
@@ -97,7 +100,7 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={10} // This would ideally be fetched from the database
+                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
@@ -119,7 +122,7 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={10} // This would ideally be fetched from the database
+                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
