@@ -2,15 +2,12 @@
   "name": "businessai",
   "version": "0.2.0",
   "private": true,
-  "engines": {
-    "node": ">=18 <21"
-  },
   "scripts": {
-    "predev": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
+    "predev": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "dev": "next dev",
-    "prebuild": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
+    "prebuild": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "build": "next build",
-    "prestart": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
+    "prestart": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "start": "next start",
     "lint": "next lint"
   },
