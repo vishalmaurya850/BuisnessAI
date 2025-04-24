@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "predev": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
     "dev": "next dev",
-    "prebuild": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "prebuild": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
     "build": "next build",
-    "prestart": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "prestart": "node -e \"if (process.platform === 'linux') { require('child_process').execSync('pnpm exec playwright install-deps', { stdio: 'inherit' }); }\" && pnpm exec playwright install",
     "start": "next start",
     "lint": "next lint"
   },
