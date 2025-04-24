@@ -3,11 +3,11 @@
   "version": "0.2.0",
   "private": true,
   "scripts": {
-    "predev": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "predev": "set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 && pnpm exec playwright install",
     "dev": "next dev",
-    "prebuild": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "prebuild": "set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 && pnpm exec playwright install",
     "build": "next build",
-    "prestart": "pnpm exec playwright install && pnpm exec playwright install-deps",
+    "prestart": "set PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 && pnpm exec playwright install",
     "start": "next start",
     "lint": "next lint"
   },
@@ -15,7 +15,6 @@
     "@aws-sdk/client-rds-data": "latest",
     "@cloudflare/workers-types": "latest",
     "@electric-sql/pglite": "latest",
-    "@ffmpeg/ffmpeg": "latest",
     "@google/generative-ai": "latest",
     "@hookform/resolvers": "^3.9.1",
     "@libsql/client": "latest",
