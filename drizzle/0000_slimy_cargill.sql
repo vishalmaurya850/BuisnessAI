@@ -3,6 +3,7 @@ CREATE TYPE "public"."alert_type" AS ENUM('new_campaign', 'ad_change', 'spend_in
 CREATE TYPE "public"."platform" AS ENUM('facebook', 'google', 'instagram', 'linkedin', 'twitter', 'tiktok', 'other');--> statement-breakpoint
 CREATE TABLE "ads" (
 	"id" serial PRIMARY KEY NOT NULL,
+	"user_id" text NOT NULL,
 	"competitor_id" integer NOT NULL,
 	"platform" "platform" NOT NULL,
 	"type" "ad_type" NOT NULL,
@@ -19,7 +20,7 @@ CREATE TABLE "ads" (
 --> statement-breakpoint
 CREATE TABLE "alerts" (
 	"id" serial PRIMARY KEY NOT NULL,
-	"userId" text NOT NULL,
+	"user_id" text NOT NULL,
 	"business_id" integer NOT NULL,
 	"competitor_id" integer NOT NULL,
 	"type" "alert_type" NOT NULL,
@@ -44,11 +45,16 @@ CREATE TABLE "businesses" (
 --> statement-breakpoint
 CREATE TABLE "competitors" (
 	"id" serial PRIMARY KEY NOT NULL,
+	"user_id" text NOT NULL,
 	"business_id" integer NOT NULL,
 	"name" text NOT NULL,
 	"website" text NOT NULL,
 	"industry" text NOT NULL,
 	"notes" text,
+	"description" text,
+	"products" text,
+	"target_audience" text,
+	"unique_selling_proposition" text,
 	"track_facebook" boolean DEFAULT true NOT NULL,
 	"track_google" boolean DEFAULT true NOT NULL,
 	"track_instagram" boolean DEFAULT true NOT NULL,
@@ -60,6 +66,7 @@ CREATE TABLE "competitors" (
 --> statement-breakpoint
 CREATE TABLE "insights" (
 	"id" serial PRIMARY KEY NOT NULL,
+	"user_id" text NOT NULL,
 	"business_id" integer NOT NULL,
 	"title" text NOT NULL,
 	"description" text NOT NULL,
@@ -88,10 +95,14 @@ CREATE TABLE "users" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+ALTER TABLE "ads" ADD CONSTRAINT "ads_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ads" ADD CONSTRAINT "ads_competitor_id_competitors_id_fk" FOREIGN KEY ("competitor_id") REFERENCES "public"."competitors"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "alerts" ADD CONSTRAINT "alerts_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "alerts" ADD CONSTRAINT "alerts_business_id_businesses_id_fk" FOREIGN KEY ("business_id") REFERENCES "public"."businesses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "alerts" ADD CONSTRAINT "alerts_competitor_id_competitors_id_fk" FOREIGN KEY ("competitor_id") REFERENCES "public"."competitors"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "businesses" ADD CONSTRAINT "businesses_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "competitors" ADD CONSTRAINT "competitors_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "competitors" ADD CONSTRAINT "competitors_business_id_businesses_id_fk" FOREIGN KEY ("business_id") REFERENCES "public"."businesses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "insights" ADD CONSTRAINT "insights_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "insights" ADD CONSTRAINT "insights_business_id_businesses_id_fk" FOREIGN KEY ("business_id") REFERENCES "public"."businesses"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "user_preferences" ADD CONSTRAINT "user_preferences_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;

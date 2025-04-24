@@ -2,10 +2,10 @@ import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { db } from "@/lib/db"
 import { competitors } from "@/lib/db/schema"
-import { eq } from "drizzle-orm"
+import { eq, and } from "drizzle-orm"
 import { crawlCompetitorWebsite, processScrapedWebsiteAds } from "@/lib/scraper/website-crawler"
 
-export async function POST(request: Request, context: { params: { id: string } }) {
+export async function POST(request: Request, { params }: { params: { id: string } }) {
   try {
     const { userId } = await auth()
 
@@ -13,16 +13,15 @@ export async function POST(request: Request, context: { params: { id: string } }
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const params = await context.params; // Await params
-    const competitorId = Number.parseInt(params.id);
+    const competitorId = Number.parseInt(params.id)
 
     if (isNaN(competitorId)) {
       return NextResponse.json({ error: "Invalid competitor ID" }, { status: 400 })
     }
 
-    // Check if competitor exists
+    // Check if competitor exists and belongs to the current user
     const competitor = await db.query.competitors.findFirst({
-      where: eq(competitors.id, competitorId),
+      where: and(eq(competitors.id, competitorId), eq(competitors.userId, userId)),
     })
 
     if (!competitor) {
@@ -36,7 +35,7 @@ export async function POST(request: Request, context: { params: { id: string } }
     const scrapedAds = await crawlCompetitorWebsite(competitorId, 15) // Crawl up to 15 pages
 
     // Process and store the scraped ads
-    const results = await processScrapedWebsiteAds(competitorId, scrapedAds)
+    const results = await processScrapedWebsiteAds(competitorId, scrapedAds, userId) // Added userId
 
     // Update the competitor record to show crawling has completed
     await db
@@ -45,7 +44,7 @@ export async function POST(request: Request, context: { params: { id: string } }
         lastScraped: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(competitors.id, competitorId))
+      .where(and(eq(competitors.id, competitorId), eq(competitors.userId, userId)))
 
     return NextResponse.json({
       success: true,
@@ -58,7 +57,7 @@ export async function POST(request: Request, context: { params: { id: string } }
       },
     })
   } catch (error) {
-    console.error(`Error crawling website for competitor ${context.params.id}:`, error)
+    console.error(`Error crawling website for competitor ${params.id}:`, error)
     return NextResponse.json({ error: "Failed to crawl competitor website" }, { status: 500 })
   }
 }

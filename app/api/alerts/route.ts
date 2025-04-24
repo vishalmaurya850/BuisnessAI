@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { db } from "@/lib/db"
-import { alerts } from "@/lib/db/schema"
+import { alerts, competitors } from "@/lib/db/schema"
 import { desc, eq, and, sql } from "drizzle-orm"
-
-export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   try {
@@ -20,19 +18,11 @@ export async function GET(request: Request) {
     const unreadOnly = url.searchParams.get("unread") === "true"
     const importantOnly = url.searchParams.get("important") === "true"
 
-    // In a real app, we would filter by the user's business ID
+    // Filter by user ID
     const query = db
       .select()
       .from(alerts)
-      .where(
-        unreadOnly && importantOnly
-          ? and(eq(alerts.isRead, false), eq(alerts.isImportant, true))
-          : unreadOnly
-          ? eq(alerts.isRead, false)
-          : importantOnly
-          ? eq(alerts.isImportant, true)
-          : undefined
-      )
+      .where(eq(alerts.userId, userId))
       .orderBy(desc(alerts.createdAt))
       .limit(limit)
       .offset(offset)
@@ -40,14 +30,14 @@ export async function GET(request: Request) {
     const alertResults = await query
 
     // Get total count for pagination
-    const countQuery = db.select({ count: sql<number>`COUNT(*)` }).from(alerts)
+    let countQuery = db.select({ count: sql`COUNT(*)` }).from(alerts).where(eq(alerts.userId, userId))
 
     if (unreadOnly) {
-      countQuery.where(eq(alerts.isRead, false))
+      countQuery = db.select({ count: sql`COUNT(*)` }).from(alerts).where(and(eq(alerts.userId, userId), eq(alerts.isRead, false)))
     }
 
     if (importantOnly) {
-      countQuery.where(eq(alerts.isImportant, true))
+      countQuery = db.select({ count: sql`COUNT(*)` }).from(alerts).where(and(eq(alerts.userId, userId), eq(alerts.isImportant, true)))
     }
 
     const [{ count }] = await countQuery
@@ -79,13 +69,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
-    // In a real app, we would get the business ID from the user's profile
-    const businessId = 1 // Placeholder
+    // Verify the competitor belongs to the user
+    const competitor = await db.query.competitors.findFirst({
+      where: and(eq(competitors.id, body.competitorId), eq(competitors.userId, userId)),
+    })
+
+    if (!competitor) {
+      return NextResponse.json({ error: "Competitor not found or not owned by user" }, { status: 404 })
+    }
+
+    // Get the business ID from the competitor
+    const businessId = competitor.businessId
 
     const newAlert = await db
       .insert(alerts)
       .values({
-        userId,
+        userId, // Add user ID to link directly to the user
         businessId,
         competitorId: body.competitorId,
         type: body.type,
@@ -131,10 +130,15 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 })
     }
 
-    const updatedAlert = await db.update(alerts).set(updateData).where(eq(alerts.id, body.id)).returning()
+    // Update the alert, ensuring it belongs to the user
+    const updatedAlert = await db
+      .update(alerts)
+      .set(updateData)
+      .where(and(eq(alerts.id, body.id), eq(alerts.userId, userId)))
+      .returning()
 
     if (updatedAlert.length === 0) {
-      return NextResponse.json({ error: "Alert not found" }, { status: 404 })
+      return NextResponse.json({ error: "Alert not found or not owned by user" }, { status: 404 })
     }
 
     return NextResponse.json(updatedAlert[0])

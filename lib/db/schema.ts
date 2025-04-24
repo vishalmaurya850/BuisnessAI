@@ -1,6 +1,5 @@
 import type { InferModel } from "drizzle-orm"
 import { pgTable, serial, text, timestamp, boolean, json, integer, pgEnum } from "drizzle-orm/pg-core"
-import { relations } from "drizzle-orm"
 
 // Enums
 export const platformEnum = pgEnum("platform", [
@@ -26,7 +25,7 @@ export const alertTypeEnum = pgEnum("alert_type", [
 
 // Tables
 export const users = pgTable("users", {
-  id: text("id").primaryKey(), // Clerk user ID
+  id: text("id").primaryKey(), // Clerk user ID as primary key
   email: text("email"),
   name: text("name"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -47,6 +46,7 @@ export const userPreferences = pgTable("user_preferences", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 })
 
+// Businesses are now directly linked to users (not through a separate businesses table)
 export const businesses = pgTable("businesses", {
   id: serial("id").primaryKey(),
   userId: text("user_id")
@@ -63,6 +63,9 @@ export const businesses = pgTable("businesses", {
 
 export const competitors = pgTable("competitors", {
   id: serial("id").primaryKey(),
+  userId: text("user_id") // Direct link to user
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   businessId: integer("business_id")
     .notNull()
     .references(() => businesses.id, { onDelete: "cascade" }),
@@ -70,6 +73,12 @@ export const competitors = pgTable("competitors", {
   website: text("website").notNull(),
   industry: text("industry").notNull(),
   notes: text("notes"),
+  // New fields for enhanced competitor information
+  description: text("description"),
+  products: text("products"),
+  targetAudience: text("target_audience"),
+  uniqueSellingProposition: text("unique_selling_proposition"),
+  // Tracking preferences
   trackFacebook: boolean("track_facebook").default(true).notNull(),
   trackGoogle: boolean("track_google").default(true).notNull(),
   trackInstagram: boolean("track_instagram").default(true).notNull(),
@@ -81,6 +90,9 @@ export const competitors = pgTable("competitors", {
 
 export const ads = pgTable("ads", {
   id: serial("id").primaryKey(),
+  userId: text("user_id") // Direct link to user
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   competitorId: integer("competitor_id")
     .notNull()
     .references(() => competitors.id, { onDelete: "cascade" }),
@@ -99,7 +111,9 @@ export const ads = pgTable("ads", {
 
 export const alerts = pgTable("alerts", {
   id: serial("id").primaryKey(),
-  userId: text("userId").notNull(),
+  userId: text("user_id") // Direct link to user
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   businessId: integer("business_id")
     .notNull()
     .references(() => businesses.id, { onDelete: "cascade" }),
@@ -116,6 +130,9 @@ export const alerts = pgTable("alerts", {
 
 export const insights = pgTable("insights", {
   id: serial("id").primaryKey(),
+  userId: text("user_id") // Direct link to user
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   businessId: integer("business_id")
     .notNull()
     .references(() => businesses.id, { onDelete: "cascade" }),
@@ -125,13 +142,6 @@ export const insights = pgTable("insights", {
   isApplied: boolean("is_applied").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 })
-
-export const alertsRelations = relations(alerts, ({ one }) => ({
-  competitor: one(competitors, {
-    fields: [alerts.competitorId],
-    references: [competitors.id],
-  }),
-}))
 
 // Types
 export type User = InferModel<typeof users>

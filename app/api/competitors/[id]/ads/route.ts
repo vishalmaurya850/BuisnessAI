@@ -2,9 +2,7 @@ import { NextResponse } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { db } from "@/lib/db"
 import { ads, competitors } from "@/lib/db/schema"
-import { eq, desc, sql, and } from "drizzle-orm"
-
-export const runtime = "nodejs";
+import { eq, desc, and, sql } from "drizzle-orm"
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   try {
@@ -20,9 +18,9 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ error: "Invalid competitor ID" }, { status: 400 })
     }
 
-    // Check if competitor exists
+    // Check if competitor exists and belongs to the current user
     const competitor = await db.query.competitors.findFirst({
-      where: eq(competitors.id, competitorId),
+      where: and(eq(competitors.id, competitorId), eq(competitors.userId, userId)),
     })
 
     if (!competitor) {
@@ -36,26 +34,28 @@ export async function GET(request: Request, { params }: { params: { id: string }
     const offset = Number.parseInt(url.searchParams.get("offset") || "0")
     const activeOnly = url.searchParams.get("active") === "true"
 
-    // Build query
+    // Build query conditions with user ID filter
+    let whereCondition = and(eq(ads.competitorId, competitorId), eq(ads.userId, userId))
+
+    if (platform) {
+      const validPlatforms = ["facebook", "google", "instagram", "linkedin", "twitter", "tiktok", "other"] as const
+      if (validPlatforms.includes(platform as typeof validPlatforms[number])) {
+        whereCondition = and(whereCondition, eq(ads.platform, platform as typeof validPlatforms[number]))
+      }
+    }
+
+    if (type) {
+      whereCondition = and(whereCondition, eq(ads.type, type as "other" | "image" | "video" | "text" | "carousel"))
+    }
+
+    if (activeOnly) {
+      whereCondition = and(whereCondition, eq(ads.isActive, true))
+    }
+
+    // Build the query with ordering, limit, and offset
     const query = db.query.ads.findMany({
-      where: (ads, { and, eq }) => {
-        const conditions = [eq(ads.competitorId, competitorId)]
-
-        if (platform) {
-          conditions.push(eq(ads.platform, platform as "facebook" | "google" | "instagram" | "linkedin" | "twitter" | "tiktok" | "other"))
-        }
-
-        if (type) {
-          conditions.push(eq(ads.type, type as "other" | "image" | "video" | "text" | "carousel"))
-        }
-
-        if (activeOnly) {
-          conditions.push(eq(ads.isActive, true))
-        }
-
-        return and(...conditions)
-      },
-      orderBy: [desc(ads.firstSeen)],
+      where: whereCondition,
+      orderBy: desc(ads.firstSeen),
       limit,
       offset,
     })
@@ -63,26 +63,18 @@ export async function GET(request: Request, { params }: { params: { id: string }
     const adResults = await query
 
     // Get total count for pagination
+    const countConditions = and(
+      eq(ads.competitorId, competitorId),
+      eq(ads.userId, userId),
+      platform ? eq(ads.platform, platform as "facebook" | "google" | "instagram" | "linkedin" | "twitter" | "tiktok" | "other") : undefined,
+      type ? eq(ads.type, type as "other" | "image" | "video" | "text" | "carousel") : undefined,
+      activeOnly ? eq(ads.isActive, true) : undefined
+    )
+    
     const countQuery = db
       .select({ count: sql`COUNT(*)` })
       .from(ads)
-      .where(() => {
-        const conditions = [eq(ads.competitorId, competitorId)];
-
-        if (platform) {
-          conditions.push(eq(ads.platform, platform as "facebook" | "google" | "instagram" | "linkedin" | "twitter" | "tiktok" | "other"));
-        }
-
-        if (type) {
-          conditions.push(eq(ads.type, type as "other" | "image" | "video" | "text" | "carousel"));
-        }
-
-        if (activeOnly) {
-          conditions.push(eq(ads.isActive, true));
-        }
-
-        return and(...conditions);
-      });
+      .where(countConditions)
 
     const [{ count }] = await countQuery
 

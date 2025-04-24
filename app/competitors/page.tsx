@@ -5,18 +5,33 @@ import { Eye, Plus, Search } from "lucide-react"
 import Link from "next/link"
 import { Input } from "@/components/ui/input"
 import { db } from "@/lib/db"
-import { ads, competitors } from "@/lib/db/schema"
-import { desc, eq, sql } from "drizzle-orm"
+import { competitors } from "@/lib/db/schema"
+import { desc, eq } from "drizzle-orm"
 import { DeleteCompetitorDialog } from "@/components/competitors/delete-competitor-dialog"
+import { auth } from "@clerk/nextjs/server"
+import { ensureUserExists } from "@/lib/auth"
+import { getActiveAdsCountForCompetitors } from "@/lib/competitors/stats"
 
 export default async function CompetitorsPage() {
-  // Fetch competitors from the database
+  // Get the current user ID
+  const { userId } = await auth()
+
+  if (!userId) {
+    return <div>Unauthorized. Please sign in.</div>
+  }
+
+  // Ensure user exists in our database
+  await ensureUserExists(userId)
+
+  // Fetch competitors from the database for this user
   const allCompetitors = await db.query.competitors.findMany({
+    where: eq(competitors.userId, userId),
     orderBy: [desc(competitors.updatedAt)],
   })
 
-  // Get active ads count
-  const activeAdsCount = await db.select({ count: sql`COUNT(*)` }).from(ads).where(eq(ads.isActive, true))
+  // Get ad counts for all competitors
+  const competitorIds = allCompetitors.map((c) => c.id)
+  const adCounts = await getActiveAdsCountForCompetitors(competitorIds, userId)
 
   // Get most active competitors (those with most recent updates)
   const activeCompetitors = [...allCompetitors]
@@ -72,7 +87,8 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
+                  description={competitor.description || `A competitor in the ${competitor.industry} industry.`}
+                  activeAds={adCounts.get(competitor.id) || 0}
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
@@ -100,7 +116,8 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
+                  description={competitor.description || `A competitor in the ${competitor.industry} industry.`}
+                  activeAds={adCounts.get(competitor.id) || 0}
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
@@ -122,7 +139,8 @@ export default async function CompetitorsPage() {
                   id={competitor.id}
                   name={competitor.name}
                   industry={competitor.industry}
-                  activeAds={typeof activeAdsCount[0]?.count === "number" ? activeAdsCount[0].count : 0} // This would ideally be fetched from the database
+                  description={competitor.description || `A competitor in the ${competitor.industry} industry.`}
+                  activeAds={adCounts.get(competitor.id) || 0}
                   lastActivity={
                     competitor.lastScraped ? new Date(competitor.lastScraped).toLocaleDateString() : "Never"
                   }
@@ -144,12 +162,14 @@ function CompetitorCard({
   id,
   name,
   industry,
+  description,
   activeAds,
   lastActivity,
 }: {
   id: number
   name: string
   industry: string
+  description: string
   activeAds: number
   lastActivity: string
 }) {
@@ -170,6 +190,7 @@ function CompetitorCard({
         <CardDescription>{industry}</CardDescription>
       </CardHeader>
       <CardContent>
+        <p className="text-sm text-muted-foreground mb-4 line-clamp-2">{description}</p>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-sm font-medium">Active Ads</p>

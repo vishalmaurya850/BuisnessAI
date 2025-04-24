@@ -1,5 +1,5 @@
 {
-  "id": "be88c89c-5bc0-4fed-931e-d6bf23a97485",
+  "id": "d4c90ded-ee09-4309-a520-018944eb8c58",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -12,6 +12,12 @@
           "name": "id",
           "type": "serial",
           "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
           "notNull": true
         },
         "competitor_id": {
@@ -96,6 +102,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "ads_user_id_users_id_fk": {
+          "name": "ads_user_id_users_id_fk",
+          "tableFrom": "ads",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "ads_competitor_id_competitors_id_fk": {
           "name": "ads_competitor_id_competitors_id_fk",
           "tableFrom": "ads",
@@ -126,8 +145,8 @@
           "primaryKey": true,
           "notNull": true
         },
-        "userId": {
-          "name": "userId",
+        "user_id": {
+          "name": "user_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -187,6 +206,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "alerts_user_id_users_id_fk": {
+          "name": "alerts_user_id_users_id_fk",
+          "tableFrom": "alerts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "alerts_business_id_businesses_id_fk": {
           "name": "alerts_business_id_businesses_id_fk",
           "tableFrom": "alerts",
@@ -313,6 +345,12 @@
           "primaryKey": true,
           "notNull": true
         },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
         "business_id": {
           "name": "business_id",
           "type": "integer",
@@ -339,6 +377,30 @@
         },
         "notes": {
           "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "products": {
+          "name": "products",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_audience": {
+          "name": "target_audience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unique_selling_proposition": {
+          "name": "unique_selling_proposition",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -394,6 +456,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "competitors_user_id_users_id_fk": {
+          "name": "competitors_user_id_users_id_fk",
+          "tableFrom": "competitors",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "competitors_business_id_businesses_id_fk": {
           "name": "competitors_business_id_businesses_id_fk",
           "tableFrom": "competitors",
@@ -422,6 +497,12 @@
           "name": "id",
           "type": "serial",
           "primaryKey": true,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
           "notNull": true
         },
         "business_id": {
@@ -465,6 +546,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "insights_user_id_users_id_fk": {
+          "name": "insights_user_id_users_id_fk",
+          "tableFrom": "insights",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "insights_business_id_businesses_id_fk": {
           "name": "insights_business_id_businesses_id_fk",
           "tableFrom": "insights",

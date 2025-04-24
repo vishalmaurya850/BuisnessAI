@@ -3,12 +3,10 @@ import { db } from "@/lib/db"
 import { businesses, competitors } from "@/lib/db/schema"
 import { auth } from "@clerk/nextjs/server"
 import { eq } from "drizzle-orm"
-import { discoverCompetitors } from "@/lib/ai"
-import type { BusinessData, DiscoveryResponse, CompetitorData } from "@/lib/types"
+import { discoverCompetitorsWithDetails } from "@/lib/ai"
+import type { BusinessData, DiscoveryResponse } from "@/lib/types"
 
-export const runtime = "nodejs";
-
-export async function POST() {
+export async function POST(request: Request) {
   try {
     const { userId } = await auth()
 
@@ -25,8 +23,8 @@ export async function POST() {
       return NextResponse.json({ error: "Business not found" }, { status: 404 })
     }
 
-    // Use AI to identify potential competitors
-    const discoveredCompetitors = await discoverCompetitors(business as unknown as BusinessData)
+    // Use AI to identify potential competitors with detailed information
+    const discoveredCompetitors = await discoverCompetitorsWithDetails(business as unknown as BusinessData)
 
     // Add the competitors to the database
     const newCompetitors = []
@@ -42,9 +40,14 @@ export async function POST() {
           .insert(competitors)
           .values({
             businessId: business.id,
+            userId, // Add user ID to link directly to the user
             name: comp.name,
             website: comp.website,
             industry: comp.industry,
+            description: comp.description,
+            products: comp.products,
+            targetAudience: comp.targetAudience,
+            uniqueSellingProposition: comp.uniqueSellingProposition,
             trackFacebook: true,
             trackGoogle: true,
             trackInstagram: true,
@@ -73,7 +76,7 @@ export async function POST() {
 
     const response: DiscoveryResponse = {
       success: true,
-      newCompetitors: newCompetitors as CompetitorData[],
+      newCompetitors: newCompetitors as any,
       total: newCompetitors.length,
     }
 

@@ -8,7 +8,7 @@ import { auth } from "@clerk/nextjs/server"
 import { redirect } from "next/navigation"
 import { db } from "@/lib/db"
 import { businesses, competitors, ads, alerts, insights } from "@/lib/db/schema"
-import { eq, desc, sql } from "drizzle-orm"
+import { eq, desc, sql, and } from "drizzle-orm"
 import { GenerateInsightButton } from "@/components/generate-insight-button"
 
 export default async function DashboardPage() {
@@ -34,45 +34,56 @@ export default async function DashboardPage() {
   const competitorCount = await db
     .select({ count: sql`COUNT(*)` })
     .from(competitors)
+    .where(eq(competitors.businessId, business.id)); // Use business.id
 
   // Get active ads count
-  const activeAdsCount = await db.select({ count: sql`COUNT(*)` }).from(ads).where(eq(ads.isActive, true))
+  const activeAdsCount = await db
+    .select({ count: sql`COUNT(*)` })
+    .from(ads)
+    .where(and(eq(ads.isActive, true), eq(ads.competitorId, business.id))); // Use business.id
 
   // Get new alerts count (last 24 hours)
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayString = yesterday.toISOString() // Convert Date to string
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayString = yesterday.toISOString();
 
   const newAlertsCount = await db
     .select({ count: sql`COUNT(*)` })
     .from(alerts)
-    .where(sql`${alerts.createdAt} > ${yesterdayString}`)
+    .where(and(sql`${alerts.createdAt} > ${yesterdayString}`, eq(alerts.businessId, business.id))); // Use business.id
 
-  // Get insights count
-  const insightsCount = await db.select({ count: sql`COUNT(*)` }).from(insights)
+  // Get insights count for the user
+  const insightsCount = await db
+    .select({ count: sql`COUNT(*)` })
+    .from(insights)
+    .where(eq(insights.businessId, business.id)); // Use business.id
 
-  // Get top competitors
+  // Get top competitors for the user
   const topCompetitors = await db.query.competitors.findMany({
+    where: eq(competitors.businessId, business.id), // Use business.id
     limit: 4,
-  })
+  });
 
-  // Get recent alerts
+  // Get recent alerts for the user
   const recentAlerts = await db.query.alerts.findMany({
+    where: eq(alerts.businessId, business.id), // Use business.id
     orderBy: [desc(alerts.createdAt)],
     limit: 3,
-  })
+  });
 
-  // Get recent activity
+  // Get recent activity for the user
   const recentActivity = await db.query.ads.findMany({
+    where: eq(ads.competitorId, business.id), // Use business.id
     orderBy: [desc(ads.firstSeen)],
     limit: 5,
-  })
+  });
 
-  // Get AI insights
+  // Get AI insights for the user
   const aiInsights = await db.query.insights.findMany({
+    where: eq(insights.businessId, business.id), // Use business.id
     orderBy: [desc(insights.createdAt)],
     limit: 3,
-  })
+  });
 
   return (
     <div className="container py-10">

@@ -4,12 +4,10 @@ import { desc, eq, and, gte } from "drizzle-orm"
 import { GoogleGenerativeAI } from "@google/generative-ai"
 import type { InsightData } from "@/lib/types"
 
-export const runtime = "nodejs";
+// Initialize Gemini API
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
 
-// Initialize Google Generative AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-
-export async function generateInsightFromRecentActivity(businessId: number): Promise<InsightData | null> {
+export async function generateInsightFromRecentActivity(businessId: number, userId: number): Promise<InsightData | null> {
   try {
     // Get competitors for this business
     const businessCompetitors = await db.query.competitors.findMany({
@@ -66,7 +64,7 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
       adsByCompetitor[ad.competitorName].push(ad)
     })
 
-    // Generate insight using Google Generative AI
+    // Generate insight using AI
     const prompt = `
       Based on the following recent competitor ad data, generate a strategic insight and recommendation:
       
@@ -78,9 +76,10 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
       - recommendation: A specific, actionable recommendation based on the insight (max 200 characters)
     `
 
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    // Use Gemini for insight generation
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
+    const result = await model.generateContent(prompt)
+    const text = result.response.text()
 
     // Parse the AI response
     let aiResponse: {
@@ -90,10 +89,20 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
     }
 
     try {
-      aiResponse = JSON.parse(text) as {
-        title: string
-        description: string
-        recommendation: string
+      // Extract JSON from response if it's wrapped in code blocks
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/)
+      if (jsonMatch) {
+        aiResponse = JSON.parse(jsonMatch[1] || jsonMatch[0]) as {
+          title: string
+          description: string
+          recommendation: string
+        }
+      } else {
+        aiResponse = JSON.parse(text) as {
+          title: string
+          description: string
+          recommendation: string
+        }
       }
     } catch (e) {
       console.error("Error parsing AI response:", e)
@@ -109,6 +118,7 @@ export async function generateInsightFromRecentActivity(businessId: number): Pro
     const [newInsight] = await db
       .insert(insights)
       .values({
+        userId: userId.toString(),
         businessId,
         title: aiResponse.title,
         description: aiResponse.description,

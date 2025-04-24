@@ -1,12 +1,12 @@
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bell, Check, Filter, Search, Settings } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { db } from "@/lib/db"
-import { alerts } from "@/lib/db/schema"
-import { desc, eq } from "drizzle-orm"
-import { auth } from "@clerk/nextjs/server"
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Bell, Check, Filter, Search, Settings } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { db } from "@/lib/db";
+import { alerts, competitors } from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function AlertsPage() {
   // Get the current user ID from auth
@@ -16,19 +16,28 @@ export default async function AlertsPage() {
     return <div>Authentication required</div>;
   }
 
-  // Fetch alerts from database
-  const alertsData = await db.query.alerts.findMany({
-    where: eq(alerts.userId, userId),
+  // Check if user has set up their business
+    const competitor = await db.query.competitors.findFirst({
+      where: eq(competitors.userId, userId),
+    })
+
+  // Fetch alerts from the database for the authenticated user
+  const alertsData = competitor ? await db.query.alerts.findMany({
+    where: competitor ? eq(alerts.businessId, competitor.id) : undefined, // Use userId as the business ID
     orderBy: [desc(alerts.createdAt)],
     with: {
-      competitor: true
+      competitor: true, // Include competitor details if needed
     },
-    limit: 50
-  });
+    limit: 50,
+  }) : [];
 
-  const allAlerts = alertsData;
-  const unreadAlerts = alertsData.filter(alert => !alert.isRead);
-  const importantAlerts = alertsData.filter(alert => alert.isImportant);
+  const allAlerts = alertsData.map((alert) => ({
+    ...alert,
+    id: alert.id.toString(),
+    createdAt: alert.createdAt.toISOString(), // Convert Date to string
+  }));
+  const unreadAlerts = allAlerts.filter((alert) => !alert.isRead);
+  const importantAlerts = allAlerts.filter((alert) => alert.isImportant);
 
   return (
     <div className="container py-10">
@@ -123,11 +132,24 @@ export default async function AlertsPage() {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }
 
 // Helper component for displaying an alert
-function AlertCard({ alert, isNew, isImportant }: any) {
+interface Alert {
+  id: string;
+  title: string;
+  description?: string;
+  createdAt: string;
+  isRead: boolean;
+  isImportant: boolean;
+  competitor?: {
+    name: string;
+  };
+  type?: string;
+}
+
+function AlertCard({ alert, isNew, isImportant }: { alert: Alert; isNew: boolean; isImportant: boolean }) {
   const timeSince = getTimeSince(new Date(alert.createdAt));
 
   return (
@@ -135,7 +157,7 @@ function AlertCard({ alert, isNew, isImportant }: any) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Bell className={`h-5 w-5 ${isNew ? 'text-primary' : 'text-muted-foreground'}`} />
+            <Bell className={`h-5 w-5 ${isNew ? "text-primary" : "text-muted-foreground"}`} />
             <CardTitle className="text-base">{alert.title}</CardTitle>
           </div>
           {isNew && (

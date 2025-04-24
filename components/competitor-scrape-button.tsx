@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { RefreshCw, Loader2 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
@@ -12,34 +12,8 @@ export function CompetitorScrapeButton({ competitorId }: { competitorId: number 
   const [, setJobId] = useState<string | null>(null)
   const { toast } = useToast()
 
-  // Check if there's an active scraping job on mount
-  useEffect(() => {
-    const checkScrapeStatus = async () => {
-      try {
-        const response = await fetch(`/api/competitors/${competitorId}/scrape`)
-
-        if (response.ok) {
-          const data = await response.json()
-
-          if (data.status === "in_progress") {
-            setIsLoading(true)
-            setJobId(data.jobId)
-            setProgress(data.progress || 0)
-
-            // Start polling for updates
-            startPolling()
-          }
-        }
-      } catch (error) {
-        console.error("Error checking scrape status:", error)
-      }
-    }
-
-    checkScrapeStatus()
-  }, [competitorId])
-
   // Polling function to check job status
-  const startPolling = () => {
+  const startPolling = useCallback(() => {
     const pollInterval = setInterval(async () => {
       try {
         const response = await fetch(`/api/competitors/${competitorId}/scrape`)
@@ -72,7 +46,33 @@ export function CompetitorScrapeButton({ competitorId }: { competitorId: number 
 
     // Clean up interval on unmount
     return () => clearInterval(pollInterval)
-  }
+  }, [competitorId, toast])
+
+  // Check if there's an active scraping job on mount
+  useEffect(() => {
+    const checkScrapeStatus = async () => {
+      try {
+        const response = await fetch(`/api/competitors/${competitorId}/scrape`)
+
+        if (response.ok) {
+          const data = await response.json()
+
+          if (data.status === "in_progress") {
+            setIsLoading(true)
+            setJobId(data.jobId)
+            setProgress(data.progress || 0)
+
+            // Start polling for updates
+            startPolling()
+          }
+        }
+      } catch (error) {
+        console.error("Error checking scrape status:", error)
+      }
+    }
+
+    checkScrapeStatus()
+  }, [competitorId, startPolling])
 
   const handleScrape = async () => {
     setIsLoading(true)

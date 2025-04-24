@@ -1,144 +1,221 @@
 import { NextResponse } from "next/server"
-import { db } from "@/lib/db"
-import { insights, ads, competitors } from "@/lib/db/schema"
-import { desc, eq, and, gte } from "drizzle-orm"
+import { auth } from "@clerk/nextjs/server"
+import { getDb } from "@/lib/db/connection"
+import { ads, competitors, insights } from "@/lib/db/schema"
+import { desc, eq, and, sql } from "drizzle-orm"
 import { GoogleGenerativeAI } from "@google/generative-ai"
-import type { InsightData } from "@/lib/types"
+import { ensureUserExists, getUserBusinessId } from "@/lib/auth"
 
-// Initialize Google Generative AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Initialize Gemini API
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
 
-// Handle GET request to fetch insights
 export async function GET(request: Request) {
   try {
-    const url = new URL(request.url);
-    const businessId = Number(url.searchParams.get("businessId"));
-    const limit = Number(url.searchParams.get("limit") || "10");
-    const offset = Number(url.searchParams.get("offset") || "0");
+    const { userId } = await auth()
 
-    if (!businessId) {
-      return NextResponse.json({ error: "Missing businessId parameter" }, { status: 400 });
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const insightsData: InsightData[] = await db.query.insights.findMany({
-      where: eq(insights.businessId, businessId),
-      orderBy: [desc(insights.createdAt)],
+    const url = new URL(request.url)
+    const limit = Number.parseInt(url.searchParams.get("limit") || "10")
+    const offset = Number.parseInt(url.searchParams.get("offset") || "0")
+
+    const database = await getDb()
+
+    // Filter by user ID
+    const insightResults = await database
+      .select()
+      .from(insights)
+      .where(eq(insights.userId, userId))
+      .orderBy(desc(insights.createdAt))
+      .limit(limit)
+      .offset(offset)
+
+    // Get total count for pagination
+    const [{ count }] = await database
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(insights)
+      .where(eq(insights.userId, userId))
+
+    return NextResponse.json({
+      insights: insightResults,
+      total: Number(count),
       limit,
       offset,
-    });
-
-    return NextResponse.json(insightsData);
+    })
   } catch (error) {
-    console.error("Error fetching insights:", error);
-    return NextResponse.json({ error: "Failed to fetch insights" }, { status: 500 });
+    console.error("Error fetching insights:", error)
+    return NextResponse.json({ error: "Failed to fetch insights" }, { status: 500 })
   }
 }
 
-// Handle POST request to generate a new insight
 export async function POST(request: Request) {
   try {
+    const { userId } = await auth();
+
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Ensure user exists in our database
+    await ensureUserExists(userId);
+
     const body = await request.json();
-    const businessId = body.businessId;
+
+    // Get the user's business ID
+    const businessId = await getUserBusinessId(userId);
 
     if (!businessId) {
-      return NextResponse.json({ error: "Missing businessId in request body" }, { status: 400 });
+      return NextResponse.json({ error: "Business not found" }, { status: 404 });
     }
 
-    // Get competitors for this business
-    const businessCompetitors = await db.query.competitors.findMany({
-      where: eq(competitors.businessId, businessId),
-    });
+    const database = await getDb();
 
-    if (businessCompetitors.length === 0) {
-      return NextResponse.json({ error: "No competitors found for this business" }, { status: 404 });
-    }
+    // Check if we need to generate an insight
+    if (body.generate) {
+      // Get recent ads to analyze
+      const recentAds = await database
+        .select()
+        .from(ads)
+        .where(eq(ads.userId, userId))
+        .orderBy(desc(ads.firstSeen))
+        .limit(50);
 
-    const competitorIds = businessCompetitors.map((c) => c.id);
+      // Get competitor information
+      const competitorInfo = await database
+        .select()
+        .from(competitors)
+        .where(eq(competitors.userId, userId));
 
-    // Get recent ads from the past week
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    const recentAds = await db.query.ads.findMany({
-      where: and(eq(ads.isActive, true), gte(ads.firstSeen, oneWeekAgo)),
-      orderBy: [desc(ads.firstSeen)],
-      limit: 50,
-    });
-
-    // Filter ads for this business's competitors
-    const relevantAds = recentAds.filter((ad) => competitorIds.includes(ad.competitorId));
-
-    if (relevantAds.length === 0) {
-      return NextResponse.json({ error: "No recent ads found for this business" }, { status: 404 });
-    }
-
-    // Prepare data for AI analysis
-    const adSummary = relevantAds.map((ad) => {
-      const competitor = businessCompetitors.find((c) => c.id === ad.competitorId);
-
-      return {
-        competitorName: competitor?.name || "Unknown",
+      // Prepare data for AI analysis
+      const adSummary = recentAds.map((ad: { competitorId: number; platform: string; type: string; content: string; firstSeen: Date }) => ({
+        competitorName: competitorInfo.find((c: { id: number; name: string }) => c.id === ad.competitorId)?.name || "Unknown",
         platform: ad.platform,
         type: ad.type,
-        content: ad.content.substring(0, 100) + (ad.content.length > 100 ? "..." : ""),
-        firstSeen: ad.firstSeen,
-        aiAnalysis: ad.aiAnalysis,
-      };
-    });
+        content: ad.content.substring(0, 100),
+        firstSeen: ad.firstSeen.toISOString(), // Convert Date to ISO string
+      }));
 
-    // Group ads by competitor
-    const adsByCompetitor: Record<string, typeof adSummary> = {};
-    adSummary.forEach((ad) => {
-      if (!adsByCompetitor[ad.competitorName]) {
-        adsByCompetitor[ad.competitorName] = [];
+      // Generate insight using AI
+      const prompt = `
+        Based on the following recent competitor ad data, generate a strategic insight and recommendation:
+        
+        ${JSON.stringify(adSummary, null, 2)}
+        
+        Format your response as JSON with these fields:
+        - title: A concise title for the insight
+        - description: A detailed explanation of the insight
+        - recommendation: A specific, actionable recommendation based on the insight
+      `;
+
+      // Use Gemini for insight generation
+      const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-exp-0827" });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text();
+
+      // Parse the AI response
+      let aiResponse;
+      try {
+        // Extract JSON from response if it's wrapped in code blocks
+        const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/);
+        if (jsonMatch) {
+          aiResponse = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+        } else {
+          aiResponse = JSON.parse(text);
+        }
+      } catch (e) {
+        console.error("Error parsing AI response:", e);
+        console.error("Raw AI response:", text);
+
+        // If parsing fails, create a generic insight
+        aiResponse = {
+          title: "New Competitor Activity Detected",
+          description: "There has been new activity from your competitors recently.",
+          recommendation: "Review the latest ads to identify trends and opportunities.",
+        };
       }
-      adsByCompetitor[ad.competitorName].push(ad);
-    });
 
-    // Generate insight using Google Generative AI
-    const prompt = `
-      Based on the following recent competitor ad data, generate a strategic insight and recommendation:
-      
-      ${JSON.stringify(adsByCompetitor, null, 2)}
-      
-      Format your response as JSON with these fields:
-      - title: A concise title for the insight (max 80 characters)
-      - description: A detailed explanation of the insight (max 300 characters)
-      - recommendation: A specific, actionable recommendation based on the insight (max 200 characters)
-    `;
+      // Create the insight
+      const newInsight = await database
+        .insert(insights)
+        .values({
+          userId, // Add user ID to link directly to the user
+          businessId,
+          title: aiResponse.title,
+          description: aiResponse.description,
+          recommendation: aiResponse.recommendation,
+        })
+        .returning();
 
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+      return NextResponse.json(newInsight[0], { status: 201 });
+    } else {
+      // Manual insight creation
+      if (!body.title || !body.description || !body.recommendation) {
+        return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      }
 
-    // Sanitize the AI response
-    const sanitizedText = text.replace(/```json|```/g, "").trim();
+      const newInsight = await database
+        .insert(insights)
+        .values({
+          userId, // Add user ID to link directly to the user
+          businessId,
+          title: body.title,
+          description: body.description,
+          recommendation: body.recommendation,
+          isApplied: body.isApplied || false,
+        })
+        .returning();
 
-    // Parse the AI response
-    let aiResponse: InsightData;
+      return NextResponse.json(newInsight[0], { status: 201 });
+    }
+  } catch (error) {
+    console.error("Error creating insight:", error);
+    return NextResponse.json({ error: "Failed to create insight" }, { status: 500 });
+  }
+}
 
-    try {
-      aiResponse = JSON.parse(sanitizedText) as InsightData;
-    } catch (e) {
-      console.error("Error parsing AI response:", e);
-      console.error("Raw text:", sanitizedText);
-      return NextResponse.json({ error: "Failed to parse AI response" }, { status: 500 });
+export async function PATCH(request: Request) {
+  try {
+    const { userId } = await auth()
+
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    // Create the insight
-    const [newInsight] = await db
-      .insert(insights)
-      .values({
-        businessId,
-        title: aiResponse.title,
-        description: aiResponse.description,
-        recommendation: aiResponse.recommendation,
-      })
-      .returning();
+    const body = await request.json()
 
-    return NextResponse.json(newInsight as InsightData, { status: 201 });
+    // Validate required fields
+    if (!body.id) {
+      return NextResponse.json({ error: "Missing insight ID" }, { status: 400 })
+    }
+
+    const updateData: Partial<{ isApplied: boolean }> = {}
+
+    if (body.isApplied !== undefined) {
+      updateData.isApplied = body.isApplied
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 })
+    }
+
+    const database = await getDb()
+
+    // Update the insight, ensuring it belongs to the user
+    const updatedInsight = await database
+      .update(insights)
+      .set(updateData)
+      .where(and(eq(insights.id, body.id), eq(insights.userId, userId)))
+      .returning()
+
+    if (updatedInsight.length === 0) {
+      return NextResponse.json({ error: "Insight not found or not owned by user" }, { status: 404 })
+    }
+
+    return NextResponse.json(updatedInsight[0])
   } catch (error) {
-    console.error("Error generating insight:", error);
-    return NextResponse.json({ error: "Failed to generate insight" }, { status: 500 });
+    console.error("Error updating insight:", error)
+    return NextResponse.json({ error: "Failed to update insight" }, { status: 500 })
   }
 }

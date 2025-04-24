@@ -14,6 +14,7 @@ import { Loader2, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Checkbox } from "@/components/ui/checkbox";
+// import { auth } from "@clerk/nextjs/server";
 
 const competitorFormSchema = z.object({
   name: z.string().min(2, {
@@ -34,7 +35,7 @@ const competitorFormSchema = z.object({
 
 type CompetitorFormValues = z.infer<typeof competitorFormSchema>;
 
-export default function AddCompetitorPage() {
+export default function AddCompetitorPage({ userId }: { userId: string }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
 
@@ -57,12 +58,18 @@ export default function AddCompetitorPage() {
 
     try {
       // Send data to the API
+      // const { userId } = await auth();
+
+      // if (!userId) {
+      //   throw new Error("User is not authenticated");
+      // }
+
       const response = await fetch("/api/competitors", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, userId }),
       });
 
       if (!response.ok) {

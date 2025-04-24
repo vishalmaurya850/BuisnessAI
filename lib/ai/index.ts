@@ -1,13 +1,18 @@
-import type { AdType, AdAnalysis, CompetitorData, AdData, BusinessData, CompetitorDiscoveryResult } from "@/lib/types"
 import { GoogleGenerativeAI } from "@google/generative-ai"
+import type { AdType, AdAnalysis, CompetitorData, AdData, BusinessData, CompetitorDiscoveryResult } from "@/lib/types"
 import { db } from "@/lib/db"
 import { competitors, ads, businesses } from "@/lib/db/schema"
 import { eq, desc, like } from "drizzle-orm"
-
-export const runtime = "nodejs"; 
+import { discoverCompetitorsWithDetails } from "./competitor-discovery"
+// import { createClient } from "@supabase/supabase-js"
 
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "")
+
+// Initialize Supabase for file storage
+// const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+// const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ""
+// const supabase = createClient(supabaseUrl, supabaseKey)
 
 // We'll use a simpler approach for video analysis without FFmpeg
 // since it's causing TypeScript issues
@@ -40,15 +45,20 @@ export async function analyzeAdContent(content: string, adType: AdType): Promise
       Format the response as JSON with these fields: message, targetAudience, callToAction, strategy`
     }
 
-    // Use Gemini to generate analysis
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    // Use Gemini for text analysis
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
+    const result = await model.generateContent(prompt)
+    const text = result.response.text()
 
     // Parse the response as JSON
     try {
+      // Extract JSON from response if it's wrapped in code blocks
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/)
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[1] || jsonMatch[0]) as AdAnalysis
+      }
       return JSON.parse(text) as AdAnalysis
-    } catch {
+    } catch (e) {
       // If parsing fails, return the raw text
       return { rawAnalysis: text }
     }
@@ -61,7 +71,7 @@ export async function analyzeAdContent(content: string, adType: AdType): Promise
 export async function analyzeImage(imageUrl: string): Promise<AdAnalysis> {
   try {
     // Use Gemini Vision for image analysis
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" })
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
 
     // Fetch the image
     const response = await fetch(imageUrl)
@@ -98,7 +108,7 @@ export async function analyzeImage(imageUrl: string): Promise<AdAnalysis> {
     if (jsonMatch) {
       try {
         return JSON.parse(jsonMatch[1] || jsonMatch[0]) as AdAnalysis
-      } catch {
+      } catch (e) {
         return { rawAnalysis: response_text }
       }
     }
@@ -116,6 +126,7 @@ export async function analyzeVideo(videoUrl: string): Promise<AdAnalysis> {
     // We'll analyze the video content directly with AI
 
     // Use Gemini for video analysis
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
     const prompt = `Analyze this video ad at URL: ${videoUrl}
     
     Provide insights on:
@@ -126,14 +137,18 @@ export async function analyzeVideo(videoUrl: string): Promise<AdAnalysis> {
     
     Format the response as JSON with these fields: promotion, tone, callToAction, targetAudience, strategy`
 
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const result = await model.generateContent(prompt)
+    const text = result.response.text()
 
     // Parse the response as JSON
     try {
+      // Extract JSON from response if it's wrapped in code blocks
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/)
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[1] || jsonMatch[0]) as AdAnalysis
+      }
       return JSON.parse(text) as AdAnalysis
-    } catch{
+    } catch (e) {
       // If parsing fails, return the raw text
       return {
         rawAnalysis: text,
@@ -241,11 +256,10 @@ export async function generateChatResponse(question: string, userId: string): Pr
       Provide a helpful, concise response based only on the data provided. If the data doesn't contain information to answer the question, say so clearly.
     `
 
-    const model = genAI.getGenerativeModel({ model: "models/gemini-2.5-pro-exp-03-25" });
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    return text
+    // Use Gemini for chat response
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
+    const result = await model.generateContent(prompt)
+    return result.response.text()
   } catch (error) {
     console.error("Error generating chat response:", error)
     return "I'm sorry, I couldn't process your request at this time. There was an error accessing the competitor data."
@@ -257,49 +271,52 @@ export async function discoverCompetitors(business: BusinessData): Promise<Compe
     // Use AI to identify potential competitors
     const prompt = `
       I need to identify 5-10 potential competitors for a business with the following details:
-
+      
       Business Name: ${business.name}
       Industry: ${business.industry}
       ${business.location ? `Location: ${business.location}` : ""}
       Keywords: ${business.keywords}
       ${business.knownCompetitors ? `Known Competitors: ${business.knownCompetitors}` : ""}
-
+      
       For each competitor, provide:
       1. Name
       2. Website URL
       3. Industry/niche
+      
+      Format your response as JSON with an array of competitors, each with name, website, and industry fields.
+      Only include real, well-known companies that are actual competitors in this space.
+    `
 
-      Format your response ONLY as a valid JSON array of objects, where each object has "name", "website", and "industry" fields. Example: [{"name": "Example Inc", "website": "https://example.com", "industry": "Tech"}]
-      Do NOT include any introductory text, backticks, or the word "json". Just the array.
-    `;
+    // Use Gemini for competitor discovery
+    const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash-8b-latest" })
+    const result = await model.generateContent(prompt)
+    const text = result.response.text()
 
-    const modelName = "models/gemini-1.5-flash-latest";
-    const model = genAI.getGenerativeModel({ model: modelName });
-
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-
-    // Sanitize the AI response
-    const sanitizedText = text.replace(/^json\s*/i, "").replace(/```/g, "").trim();
-
-    // Parse the sanitized response
-    let parsedResponse;
+    // Parse the AI response
+    let competitorsList: { competitors: CompetitorDiscoveryResult[] }
     try {
-      parsedResponse = JSON.parse(sanitizedText);
-    } catch (error) {
-      console.error("Error parsing AI response JSON:", error);
-      console.error("Raw text:", sanitizedText);
-      throw new Error("Failed to parse AI response");
-    }
+      // Extract JSON from the response
+      const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*?}/)
 
-    // Validate that the parsed response is an array
-    if (!Array.isArray(parsedResponse)) {
-      throw new Error("AI response is not a valid array");
-    }
+      if (jsonMatch) {
+        competitorsList = JSON.parse(jsonMatch[1] || jsonMatch[0]) as { competitors: CompetitorDiscoveryResult[] }
+      } else {
+        competitorsList = JSON.parse(text) as { competitors: CompetitorDiscoveryResult[] }
+      }
 
-    return parsedResponse;
+      return competitorsList.competitors
+    } catch (e) {
+      console.error("Error parsing AI response:", e)
+      throw new Error("Failed to parse competitor data")
+    }
   } catch (error) {
-    console.error("Error discovering competitors:", error);
-    throw error;
+    console.error("Error discovering competitors:", error)
+    throw error
   }
 }
+
+/**
+ * Uses AI to discover competitors and get detailed information about them
+ */
+export { discoverCompetitorsWithDetails }
+export type { BusinessData }

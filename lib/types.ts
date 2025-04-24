@@ -18,6 +18,7 @@ export interface AdAnalysis {
 export interface AlertData {
   competitorId: number
   businessId?: number
+  userId?: string
   type: AlertType
   title: string
   description: string
@@ -30,6 +31,10 @@ export interface CompetitorData {
   website: string
   industry: string
   notes?: string
+  description?: string
+  products?: string
+  targetAudience?: string
+  uniqueSellingProposition?: string
   trackFacebook: boolean
   trackGoogle: boolean
   trackInstagram: boolean
@@ -109,7 +114,7 @@ export interface ScrapingResult {
 }
 
 export interface ScrapedAd {
-  type: string | AdType
+  type: AdType
   content: string
   mediaUrl?: string
   landingPage?: string
@@ -121,6 +126,10 @@ export interface CompetitorDiscoveryResult {
   name: string
   website: string
   industry: string
+  description?: string
+  products?: string
+  targetAudience?: string
+  uniqueSellingProposition?: string
 }
 
 export interface DiscoveryResponse {

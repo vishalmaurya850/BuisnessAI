@@ -3,30 +3,40 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArrowLeft, BarChart3, ExternalLink, ImageIcon, Video } from "lucide-react"
 import Link from "next/link"
-import Image from "next/image"
 import { db } from "@/lib/db"
 import { competitors, ads } from "@/lib/db/schema"
-import { eq, desc } from "drizzle-orm"
+import { eq, desc, and } from "drizzle-orm"
 import { notFound } from "next/navigation"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { CompetitorScrapeButton } from "@/components/competitor-scrape-button"
 import { CompetitorCrawlButton } from "@/components/competitor-crawl-button"
 import { DeleteCompetitorDialog } from "@/components/competitors/delete-competitor-dialog"
+import { auth } from "@clerk/nextjs/server"
+import { getActiveAdsCount } from "@/lib/competitors/stats"
 
-export default async function CompetitorDetailPage(context: {
+export default async function CompetitorDetailPage({
+  params,
+}: {
   params: { id: string }
 }) {
-  const params = await context.params; // Await params
-  const competitorId = Number.parseInt(params.id);
+  const { userId } = await auth()
 
-  if (isNaN(competitorId)) {
+  if (!userId) {
+    return <div>Unauthorized. Please sign in.</div>
+  }
+
+  // Await the params object
+  const { id } = await params;
+  const competitorId = Number.parseInt(id);
+  
+  if (isNaN(competitorId) || competitorId <= 0) {
     notFound()
   }
 
   // Get competitor details
   const competitor = await db.query.competitors.findFirst({
-    where: eq(competitors.id, competitorId),
+    where: and(eq(competitors.id, competitorId), eq(competitors.userId, userId)),
   })
 
   if (!competitor) {
@@ -35,7 +45,7 @@ export default async function CompetitorDetailPage(context: {
 
   // Get competitor ads
   const competitorAds = await db.query.ads.findMany({
-    where: eq(ads.competitorId, competitorId),
+    where: and(eq(ads.competitorId, competitorId), eq(ads.userId, userId)),
     orderBy: [desc(ads.firstSeen)],
     limit: 50,
   })
@@ -53,7 +63,7 @@ export default async function CompetitorDetailPage(context: {
   })
 
   // Get active ads count
-  const activeAdsCount = competitorAds.filter((ad) => ad.isActive).length
+  const activeAdsCount = await getActiveAdsCount(competitorId, userId)
 
   // Get latest ad
   const latestAd = competitorAds.length > 0 ? competitorAds[0] : null
@@ -69,6 +79,9 @@ export default async function CompetitorDetailPage(context: {
           <div>
             <h1 className="text-3xl font-bold">{competitor.name}</h1>
             <p className="text-muted-foreground">{competitor.industry}</p>
+            {competitor.description && (
+              <p className="text-sm text-muted-foreground mt-2 max-w-2xl">{competitor.description}</p>
+            )}
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" asChild>
@@ -130,6 +143,39 @@ export default async function CompetitorDetailPage(context: {
         </Card>
       </div>
 
+      {competitor.products && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Products & Services</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>{competitor.products}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {competitor.targetAudience && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Target Audience</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>{competitor.targetAudience}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {competitor.uniqueSellingProposition && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>Unique Selling Proposition</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>{competitor.uniqueSellingProposition}</p>
+          </CardContent>
+        </Card>
+      )}
+
       <Tabs defaultValue="all" className="mb-8">
         <TabsList>
           <TabsTrigger value="all">All Ads</TabsTrigger>
@@ -142,12 +188,32 @@ export default async function CompetitorDetailPage(context: {
         <TabsContent value="all" className="space-y-6">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             {competitorAds.length > 0 ? (
-              competitorAds.map((ad) => <AdCard key={ad.id} ad={ad} competitorName={competitor.name} />)
+              competitorAds
+                .filter((ad) => ["image", "video", "text"].includes(ad.type))
+                .map((ad) => (
+                  <AdCard
+                    key={ad.id}
+                    ad={{
+                      ...ad,
+                      firstSeen: ad.firstSeen.toISOString(),
+                      mediaUrl: ad.mediaUrl !== null ? ad.mediaUrl : undefined,
+                      type: ad.type === "image" || ad.type === "video" || ad.type === "text" ? ad.type : "text",
+                      aiAnalysis: ad.aiAnalysis as {
+                        emotion?: string
+                        tone?: string
+                        message?: string
+                        rawAnalysis?: string
+                      } | undefined,
+                      landingPage: ad.landingPage ?? undefined,
+                    }}
+                    competitorName={competitor.name}
+                  />
+                ))
             ) : (
               <div className="col-span-3 text-center py-10">
                 <p className="text-muted-foreground">No ads found for this competitor.</p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  Click &quotScrape&quot Now or &quotCrawl Website&quot to fetch the latest ads.
+                  Click "Scrape Now" or "Crawl Website" to fetch the latest ads.
                 </p>
               </div>
             )}
@@ -159,7 +225,23 @@ export default async function CompetitorDetailPage(context: {
               {competitorAds
                 .filter((ad) => ad.platform === platform)
                 .map((ad) => (
-                  <AdCard key={ad.id} ad={ad} competitorName={competitor.name} />
+                  <AdCard
+                    key={ad.id}
+                    ad={{
+                      ...ad,
+                      firstSeen: ad.firstSeen.toISOString(),
+                      mediaUrl: ad.mediaUrl !== null ? ad.mediaUrl : undefined,
+                      type: ad.type === "image" || ad.type === "video" || ad.type === "text" ? ad.type : "text",
+                      aiAnalysis: ad.aiAnalysis as {
+                        emotion?: string
+                        tone?: string
+                        message?: string
+                        rawAnalysis?: string
+                      } | undefined,
+                      landingPage: ad.landingPage ?? undefined,
+                    }}
+                    competitorName={competitor.name}
+                  />
                 ))}
             </div>
           </TabsContent>
@@ -188,7 +270,22 @@ function AdCard({
   ad,
   competitorName,
 }: {
-  ad: any
+  ad: {
+    id: number
+    platform: string
+    firstSeen: string
+    mediaUrl?: string
+    type: "image" | "video" | "text"
+    content: string
+    isActive: boolean
+    aiAnalysis?: {
+      emotion?: string
+      tone?: string
+      message?: string
+      rawAnalysis?: string
+    }
+    landingPage?: string
+  }
   competitorName: string
 }) {
   return (
@@ -206,7 +303,7 @@ function AdCard({
         <div className="mb-4 aspect-video rounded-md bg-muted/50 flex items-center justify-center">
           {ad.mediaUrl ? (
             ad.type === "image" ? (
-              <Image
+              <img
                 src={ad.mediaUrl || "/placeholder.svg"}
                 alt="Ad content"
                 className="h-full w-full object-cover rounded-md"

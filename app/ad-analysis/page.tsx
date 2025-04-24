@@ -1,24 +1,28 @@
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { BarChart3, Download, Filter, ImageIcon, Search, Video } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { db } from "@/lib/db"
-import { notFound } from "next/navigation"
-import { ads } from "@/lib/db/schema"
-import { desc } from "drizzle-orm"
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Download, Filter, ImageIcon, Search, Video } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { db } from "@/lib/db";
+import { notFound } from "next/navigation";
+import { ads, competitors } from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function AdAnalysisPage() {
-  // Check if the code is running in a server environment
-  if (typeof window !== "undefined") {
-    return notFound(); // Prevent rendering on the client
+  // Get the authenticated user's ID
+  const { userId } = await auth();
+
+  if (!userId) {
+    return notFound(); // Prevent rendering if the user is not authenticated
   }
 
-  // Fetch ads from the database
+  // Fetch ads from the database for the authenticated user
   let allAds = [];
   try {
     allAds = await db.query.ads.findMany({
+      where: eq(ads.competitorId, competitors.id), // Filter ads by userId
       orderBy: [desc(ads.createdAt)],
     });
   } catch (error) {
@@ -26,9 +30,9 @@ export default async function AdAnalysisPage() {
     return notFound(); // Handle database connection errors gracefully
   }
 
-  const imageAds = allAds.filter((ad): ad is typeof ad & { type: "image" } => ad.type === "image")
-  const videoAds = allAds.filter((ad): ad is typeof ad & { type: "video" } => ad.type === "video")
-  const textAds = allAds.filter((ad): ad is typeof ad & { type: "text" } => ad.type === "text")
+  const imageAds = allAds.filter((ad): ad is typeof ad & { type: "image" } => ad.type === "image");
+  const videoAds = allAds.filter((ad): ad is typeof ad & { type: "video" } => ad.type === "video");
+  const textAds = allAds.filter((ad): ad is typeof ad & { type: "text" } => ad.type === "text");
 
   return (
     <div className="container py-10">
@@ -99,7 +103,7 @@ export default async function AdAnalysisPage() {
                 key={ad.id}
                 competitor={ad.competitorId.toString()}
                 platform={ad.platform}
-                type={ad.type as "image" | "video" | "text"}
+                type={ad.type}
                 date={new Date(ad.createdAt).toLocaleDateString()}
               />
             ))}
@@ -132,23 +136,8 @@ export default async function AdAnalysisPage() {
           </div>
         </TabsContent>
       </Tabs>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Ad Performance Analysis</CardTitle>
-          <CardDescription>Comparative analysis of competitor ad performance</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[300px] flex items-center justify-center border rounded-md bg-muted/30">
-            <div className="text-center">
-              <BarChart3 className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground">Performance chart will appear here</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
-  )
+  );
 }
 
 function AdCard({
@@ -157,10 +146,10 @@ function AdCard({
   type,
   date,
 }: {
-  competitor: string
-  platform: string
-  type: "image" | "video" | "text"
-  date: string
+  competitor: string;
+  platform: string;
+  type: "image" | "video" | "text";
+  date: string;
 }) {
   return (
     <Card>
@@ -182,28 +171,7 @@ function AdCard({
             </div>
           )}
         </div>
-        <div className="space-y-2">
-          <div>
-            <p className="text-sm font-medium">Ad Type</p>
-            <p className="text-sm text-muted-foreground capitalize">{type}</p>
-          </div>
-          <div>
-            <p className="text-sm font-medium">AI Analysis</p>
-            <p className="text-sm text-muted-foreground">
-              {type === "image"
-                ? "Product showcase with bright colors targeting young adults"
-                : type === "video"
-                ? "Emotional storytelling with customer testimonials"
-                : "Direct response ad with strong call-to-action"}
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 pt-4 border-t">
-          <Button variant="outline" className="w-full">
-            View Details
-          </Button>
-        </div>
       </CardContent>
     </Card>
-  )
+  );
 }

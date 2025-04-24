@@ -2,10 +2,11 @@ import { chromium, type Browser, type BrowserContext } from "playwright"
 import { db } from "@/lib/db"
 import { ads, competitors } from "@/lib/db/schema"
 import { analyzeAdContent } from "@/lib/ai"
-import { eq } from "drizzle-orm"
+import { eq, and } from "drizzle-orm"
 import { createAlert } from "@/lib/alerts"
 import type { AdType, Platform, ScrapingResult, ScrapedAd } from "@/lib/types"
 import { crawlCompetitorWebsite } from "./website-crawler"
+import { Page } from "playwright";
 
 export const runtime = "nodejs"
 
@@ -93,7 +94,9 @@ async function createStealthContext(): Promise<BrowserContext> {
 }
 
 // Safe page evaluation that handles errors
-async function safeEvaluate<T>(page: any, fn: () => T, defaultValue: T): Promise<T> {
+
+
+async function safeEvaluate<T>(page: Page, fn: () => T, defaultValue: T): Promise<T> {
   try {
     return await page.evaluate(fn)
   } catch (error) {
@@ -102,49 +105,19 @@ async function safeEvaluate<T>(page: any, fn: () => T, defaultValue: T): Promise
   }
 }
 
-// Retry mechanism with exponential backoff
-async function retry<T>(
-  fn: () => Promise<T>,
-  options: {
-    retries: number
-    initialDelay: number
-    maxDelay?: number
-    factor?: number
-    onRetry?: (attempt: number, error: Error, delay: number) => void
-  },
-): Promise<T> {
-  const { retries, initialDelay, maxDelay = 30000, factor = 2, onRetry } = options
-  let lastError: Error
-  let delay = initialDelay
-
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      return await fn()
-    } catch (error) {
-      lastError = error as Error
-
-      // Calculate next delay with exponential backoff
-      delay = Math.min(delay * factor, maxDelay)
-
-      if (onRetry) onRetry(attempt + 1, lastError, delay)
-
-      await new Promise((resolve) => setTimeout(resolve, delay))
-    }
-  }
-
-  throw lastError!
-}
+// Retry mechanism with exponential backoff (removed as it is unused)
 
 // Safe selector waiting that doesn't throw if not found
-async function waitForSelectorSafe(page: any, selector: string, options: { timeout: number }): Promise<boolean> {
+async function waitForSelectorSafe(page: Page, selector: string, options: { timeout: number }): Promise<boolean> {
   try {
     await page.waitForSelector(selector, options)
     return true
-  } catch (error) {
+  } catch {
     return false
   }
 }
 
+// Update the scrapeCompetitor function to include userId
 export async function scrapeCompetitor(competitorId: number): Promise<ScrapingResult> {
   try {
     // Get competitor details
@@ -153,8 +126,15 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
     })
 
     if (!competitor) {
-      throw new Error(`Competitor with ID ${competitorId} not found`)
+      console.error(`Competitor with ID ${competitorId} not found`)
+      return {
+        success: false,
+        competitorId,
+        error: `Competitor with ID ${competitorId} not found`,
+      }
     }
+
+    const userId = competitor.userId // Get the userId from the competitor
 
     console.log(`Starting scrape for competitor: ${competitor.name}`)
 
@@ -213,7 +193,7 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
     }
 
     // Process and store results
-    await processScrapedData(competitorId, results)
+    await processScrapedData(competitorId, results, userId) // Pass userId
 
     // Update last scraped timestamp
     await db
@@ -243,7 +223,7 @@ export async function scrapeCompetitor(competitorId: number): Promise<ScrapingRe
 
 async function scrapeFacebookAds(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -427,7 +407,7 @@ async function scrapeFacebookAds(competitorName: string): Promise<ScrapedAd[]> {
 // Alternative method for Facebook when login is required
 async function scrapeFacebookAdsAlternative(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -479,7 +459,7 @@ async function scrapeFacebookAdsAlternative(competitorName: string): Promise<Scr
 
     // Filter results to only include relevant Facebook ad content
     return searchResults.filter(
-      (ad: ScrapedAd) =>
+      (ad) =>
         ad.content.toLowerCase().includes("ad") ||
         ad.content.toLowerCase().includes("campaign") ||
         ad.content.toLowerCase().includes("facebook") ||
@@ -509,7 +489,7 @@ async function scrapeFacebookAdsAlternative(competitorName: string): Promise<Scr
 
 async function scrapeGoogleAds(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -565,8 +545,9 @@ async function scrapeGoogleAds(competitorName: string): Promise<ScrapedAd[]> {
           return []
         }
 
-        // If we can't find ads and there's no "no results" message, try the alternative method
-        console.log("Could not find Google ad cards, trying alternative method")
+        // Log the error instead of throwing it
+        console.log("Could not find Google ad cards, trying alternative method");
+        return [];
       }
 
       // Scroll to load more ads
@@ -678,7 +659,7 @@ async function scrapeGoogleAds(competitorName: string): Promise<ScrapedAd[]> {
 // Alternative method for Google Ads
 async function scrapeGoogleAdsAlternative(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -763,7 +744,7 @@ async function scrapeGoogleAdsAlternative(competitorName: string): Promise<Scrap
 
     // Filter results to only include relevant ad content
     return searchResults.filter(
-      (ad: ScrapedAd) =>
+      (ad) =>
         ad.content.toLowerCase().includes("ad") ||
         ad.content.toLowerCase().includes("sponsored") ||
         ad.content.toLowerCase().includes("advertisement") ||
@@ -798,7 +779,7 @@ async function scrapeInstagramAds(competitorName: string): Promise<ScrapedAd[]> 
 
 async function scrapeInstagramAlternative(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -866,7 +847,7 @@ async function scrapeInstagramAlternative(competitorName: string): Promise<Scrap
 
     // Filter results to only include relevant Instagram content
     return searchResults.filter(
-      (ad: ScrapedAd) =>
+      (ad) =>
         (ad.content.toLowerCase().includes("instagram") ||
           (ad.landingPage && ad.landingPage.includes("instagram.com"))) &&
         (ad.content.toLowerCase().includes("sponsored") ||
@@ -903,7 +884,7 @@ async function scrapeLinkedInAds(competitorName: string): Promise<ScrapedAd[]> {
 
 async function scrapeLinkedInAlternative(competitorName: string): Promise<ScrapedAd[]> {
   let context: BrowserContext | null = null
-  let page: any = null
+  let page: Page | null = null
 
   try {
     context = await createStealthContext()
@@ -955,7 +936,7 @@ async function scrapeLinkedInAlternative(competitorName: string): Promise<Scrape
 
     // Filter results to only include relevant LinkedIn ad content
     return searchResults.filter(
-      (ad: ScrapedAd) =>
+      (ad) =>
         (ad.content.toLowerCase().includes("linkedin") ||
           (ad.landingPage && ad.landingPage.includes("linkedin.com"))) &&
         (ad.content.toLowerCase().includes("sponsored") ||
@@ -984,11 +965,19 @@ async function scrapeLinkedInAlternative(competitorName: string): Promise<Scrape
   }
 }
 
-async function processScrapedData(competitorId: number, results: Record<Platform, ScrapedAd[]>): Promise<void> {
+// Update the processScrapedData function to include userId
+async function processScrapedData(
+  competitorId: number,
+  results: Record<Platform, ScrapedAd[]>,
+  userId: string,
+): Promise<void> {
   try {
     // Get existing ads for this competitor
     const existingAds = await db.query.ads.findMany({
-      where: eq(ads.competitorId, competitorId),
+      where: and(
+        eq(ads.competitorId, competitorId),
+        eq(ads.userId, userId), // Filter by userId
+      ),
     })
 
     // Create a map of existing ad content for faster lookup
@@ -1029,6 +1018,7 @@ async function processScrapedData(competitorId: number, results: Record<Platform
 
             // Prepare data for insertion
             adsToInsert.push({
+              userId, // Add user ID to link directly to the user
               competitorId,
               platform: platform as Platform,
               type: adData.type as AdType,
@@ -1044,6 +1034,7 @@ async function processScrapedData(competitorId: number, results: Record<Platform
             // Prepare alert data
             alertPromises.push(
               createAlert({
+                userId, // Add user ID to link directly to the user
                 competitorId,
                 type: "new_campaign",
                 title: `New ${adData.type} ad on ${platform}`,
@@ -1055,6 +1046,7 @@ async function processScrapedData(competitorId: number, results: Record<Platform
 
             // Still insert the ad even if AI analysis fails
             adsToInsert.push({
+              userId, // Add user ID to link directly to the user
               competitorId,
               platform: platform as Platform,
               type: adData.type as AdType,
@@ -1077,7 +1069,21 @@ async function processScrapedData(competitorId: number, results: Record<Platform
     // Execute batch updates
     if (adsToUpdate.length > 0) {
       console.log(`Updating ${adsToUpdate.length} existing ads`)
-      batchOperations.push(Promise.all(adsToUpdate.map((ad) => db.update(ads).set(ad).where(eq(ads.id, ad.id)))))
+      batchOperations.push(
+        Promise.all(
+          adsToUpdate.map((ad) =>
+            db
+              .update(ads)
+              .set(ad)
+              .where(
+                and(
+                  eq(ads.id, ad.id),
+                  eq(ads.userId, userId), // Ensure user owns the ad
+                ),
+              ),
+          ),
+        ),
+      )
     }
 
     // Execute batch insert in chunks to avoid DB limits
@@ -1116,6 +1122,7 @@ async function processScrapedData(competitorId: number, results: Record<Platform
         const deactivatePromises = adsToDeactivate.map(async (ad) => {
           try {
             await createAlert({
+              userId, // Add user ID to link directly to the user
               competitorId,
               type: "ad_change",
               title: `Ad removed from ${ad.platform}`,
@@ -1128,7 +1135,12 @@ async function processScrapedData(competitorId: number, results: Record<Platform
                 isActive: false,
                 updatedAt: new Date(),
               })
-              .where(eq(ads.id, ad.id))
+              .where(
+                and(
+                  eq(ads.id, ad.id),
+                  eq(ads.userId, userId), // Ensure user owns the ad
+                ),
+              )
           } catch (error) {
             console.error("Error creating alert for deactivated ad:", error)
             return db
@@ -1137,7 +1149,12 @@ async function processScrapedData(competitorId: number, results: Record<Platform
                 isActive: false,
                 updatedAt: new Date(),
               })
-              .where(eq(ads.id, ad.id))
+              .where(
+                and(
+                  eq(ads.id, ad.id),
+                  eq(ads.userId, userId), // Ensure user owns the ad
+                ),
+              )
           }
         })
 

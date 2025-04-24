@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server"
 import { db } from "@/lib/db"
-import { businesses, users } from "@/lib/db/schema"
+import { businesses } from "@/lib/db/schema"
 import { auth, currentUser } from "@clerk/nextjs/server"
 import { eq } from "drizzle-orm"
-import { GoogleGenerativeAI } from "@google/generative-ai"
+import { ensureUserExists } from "@/lib/auth"
+import { discoverCompetitorsWithDetails, type BusinessData } from "@/lib/ai"
 
-export const runtime = "nodejs";
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+// Ensure all imports are correctly resolved
+if (!db || !businesses || !auth || !currentUser || !eq || !ensureUserExists || !discoverCompetitorsWithDetails) {
+  throw new Error("One or more imports are undefined. Please verify the modules.");
+}
 
 export async function GET() {
   try {
@@ -17,25 +20,9 @@ export async function GET() {
     }
 
     // Ensure user exists in our database
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, userId),
-    })
+    await ensureUserExists(userId)
 
-    if (!user) {
-      // Create user if they don't exist (this can happen if the webhook fails)
-      const clerkUser = await currentUser()
-
-      if (!clerkUser) {
-        return NextResponse.json({ error: "User not found" }, { status: 404 })
-      }
-
-      await db.insert(users).values({
-        id: userId,
-        email: clerkUser.emailAddresses[0]?.emailAddress,
-        name: `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim(),
-      })
-    }
-
+    // Get the user's business
     const business = await db.query.businesses.findFirst({
       where: eq(businesses.userId, userId),
     })
@@ -53,29 +40,39 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { userId } = await auth();
+    const { userId } = await auth()
 
     if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const body = await request.json();
+    const body = await request.json()
 
     // Validate required fields
     if (!body.businessName || !body.industry || !body.keywords) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
+
+    // Get current user details
+    const clerkUser = await currentUser()
+
+    // Ensure user exists in our database
+    await ensureUserExists(
+      userId,
+      clerkUser?.emailAddresses[0]?.emailAddress,
+      `${clerkUser?.firstName || ""} ${clerkUser?.lastName || ""}`.trim(),
+    )
 
     // Check if user already has a business
     const existingBusiness = await db.query.businesses.findFirst({
       where: eq(businesses.userId, userId),
-    });
+    })
 
     if (existingBusiness) {
       return NextResponse.json(
         { error: "User already has a business profile", business: existingBusiness },
-        { status: 400 }
-      );
+        { status: 400 },
+      )
     }
 
     // Create the business
@@ -89,56 +86,77 @@ export async function POST(request: Request) {
         keywords: body.keywords,
         knownCompetitors: body.knownCompetitors || null,
       })
-      .returning();
+      .returning()
 
-    // If known competitors were provided, create them with AI-enhanced details
+    // If known competitors were provided, create them
     if (body.knownCompetitors) {
       const competitors = body.knownCompetitors
         .split(",")
         .map((name: string) => name.trim())
-        .filter((name: string) => name.length > 0);
+        .filter((name: string) => name.length > 0)
 
       if (competitors.length > 0) {
-        for (const competitorName of competitors) {
-          try {
-            // Use AI to fetch additional details about the competitor
-            const prompt = `Provide detailed information about the competitor "${competitorName}" in the ${body.industry} industry. Include their website, industry, and any relevant details.`;
-            const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-pro" });
-            const result = await model.generateContent(prompt);
-            const aiResponse = result.response.text();
+        // For each competitor, use AI to get more details
+        try {
+          const competitorDetails = await discoverCompetitorsWithDetails({
+            ...newBusiness,
+            knownCompetitors: body.knownCompetitors,
+          } as unknown as BusinessData)
 
-            // Parse AI response (assuming it returns JSON-like data)
-            const competitorDetails = JSON.parse(aiResponse);
+          // Map the discovered competitors by name for easy lookup
+          const detailsMap = new Map(competitorDetails.map((comp) => [comp.name.toLowerCase(), comp]))
+
+          // Create competitors with details when available
+          for (const competitorName of competitors) {
+            const details = detailsMap.get(competitorName.toLowerCase()) || {
+              name: competitorName,
+              website: `https://${competitorName.toLowerCase().replace(/\s+/g, "")}.com`,
+              industry: newBusiness.industry,
+              description: `A competitor in the ${newBusiness.industry} industry.`,
+              products: "Various products and services",
+              targetAudience: "Similar to your target audience",
+              uniqueSellingProposition: "Unknown",
+            }
 
             await db.insert(competitors).values({
+              userId,
               businessId: newBusiness.id,
-              name: competitorName,
-              website: competitorDetails.website || `https://${competitorName.toLowerCase().replace(/\s+/g, "")}.com`,
-              industry: competitorDetails.industry || body.industry,
+              name: details.name,
+              website: details.website,
+              industry: details.industry || newBusiness.industry,
+              description: details.description,
+              products: details.products,
+              targetAudience: details.targetAudience,
+              uniqueSellingProposition: details.uniqueSellingProposition,
               trackFacebook: true,
               trackGoogle: true,
               trackInstagram: true,
               trackLinkedIn: false,
-            });
-          } catch (error) {
-            console.error(`Error fetching AI details for competitor "${competitorName}":`, error);
-            // Fallback to creating a basic competitor entry
+            })
+          }
+        } catch (error) {
+          console.error("Error getting competitor details:", error)
+
+          // Fallback to basic competitor creation if AI fails
+          for (const competitorName of competitors) {
             await db.insert(competitors).values({
+              userId,
               businessId: newBusiness.id,
               name: competitorName,
-              website: `https://${competitorName.toLowerCase().replace(/\s+/g, "")}.com`, // Placeholder
-              industry: body.industry,
+              website: `https://${competitorName.toLowerCase().replace(/\s+/g, "")}.com`,
+              industry: newBusiness.industry,
               trackFacebook: true,
               trackGoogle: true,
               trackInstagram: true,
               trackLinkedIn: false,
-            });
+            })
           }
         }
       }
     }
 
     // Trigger the initial competitor discovery process
+    // In a real app, this would be a background job
     try {
       await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/competitors/discover`, {
         method: "POST",
@@ -147,17 +165,18 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           businessId: newBusiness.id,
+          userId, // Include userId in the request
         }),
-      });
+      })
     } catch (error) {
-      console.error("Error triggering competitor discovery:", error);
+      console.error("Error triggering competitor discovery:", error)
       // We don't want to fail the business creation if this fails
     }
 
-    return NextResponse.json(newBusiness, { status: 201 });
+    return NextResponse.json(newBusiness, { status: 201 })
   } catch (error) {
-    console.error("Error creating business:", error);
-    return NextResponse.json({ error: "Failed to create business" }, { status: 500 });
+    console.error("Error creating business:", error)
+    return NextResponse.json({ error: "Failed to create business" }, { status: 500 })
   }
 }
 

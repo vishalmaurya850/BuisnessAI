@@ -2,8 +2,9 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { db } from "@/lib/db"
 import { ads, competitors } from "@/lib/db/schema"
 import { analyzeAdContent } from "@/lib/ai"
-import { eq } from "drizzle-orm"
+import { eq, and } from "drizzle-orm"
 import type { AdType, Platform, ScrapedAd } from "@/lib/types"
+import { JSDOM } from "jsdom"
 
 export const runtime = "nodejs"
 
@@ -55,7 +56,7 @@ async function getBrowser(): Promise<Browser> {
 
 // Create a stealth context to avoid detection
 async function createStealthContext(): Promise<BrowserContext> {
-  const browser = await getBrowser();
+  const browser = await getBrowser()
 
   // Rotate user agents to avoid detection
   const userAgents = [
@@ -63,9 +64,9 @@ async function createStealthContext(): Promise<BrowserContext> {
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-  ];
+  ]
 
-  const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+  const randomUserAgent = userAgents[Math.floor(Math.random() * userAgents.length)]
 
   return await browser.newContext({
     userAgent: randomUserAgent,
@@ -86,7 +87,7 @@ async function createStealthContext(): Promise<BrowserContext> {
       "sec-ch-ua-mobile": "?0",
       "sec-ch-ua-platform": '"Windows"',
     },
-  });
+  })
 }
 
 // Safe page evaluation that handles errors
@@ -172,8 +173,37 @@ export async function crawlCompetitorWebsite(competitorId: number, maxPages = 10
     page.setDefaultTimeout(30000)
 
     // Start with the competitor's website
-    const baseUrl = new URL(competitor.website).origin
-    urlsToVisit.push(competitor.website)
+    let baseUrl = ""
+    try {
+      // Validate and normalize the website URL
+      if (!competitor.website) {
+        throw new Error("Competitor website URL is empty")
+      }
+
+      // Add protocol if missing
+      let websiteUrl = competitor.website
+      if (!websiteUrl.startsWith("http://") && !websiteUrl.startsWith("https://")) {
+        websiteUrl = "https://" + websiteUrl
+      }
+
+      const url = new URL(websiteUrl)
+      baseUrl = url.origin
+      urlsToVisit.push(websiteUrl)
+    } catch (error) {
+      console.error(`Invalid competitor website URL: ${competitor.website}`, error)
+      // Use a fallback approach - just the domain without path
+      if (competitor.website) {
+        const domainMatch = competitor.website.match(/^(?:https?:\/\/)?(?:[^@\n]+@)?(?:www\.)?([^:/\n?]+)/)
+        if (domainMatch) {
+          baseUrl = `https://${domainMatch[1]}`
+          urlsToVisit.push(baseUrl)
+        } else {
+          throw new Error(`Cannot parse website URL: ${competitor.website}`)
+        }
+      } else {
+        throw new Error("Competitor website URL is empty")
+      }
+    }
 
     // Crawl pages until we've visited the maximum number or run out of URLs
     while (urlsToVisit.length > 0 && visitedUrls.size < maxPages) {
@@ -184,11 +214,14 @@ export async function crawlCompetitorWebsite(competitorId: number, maxPages = 10
       visitedUrls.add(currentUrl)
 
       try {
-        // Navigate to the page
-        if (currentUrl.startsWith("https://")) {
-          console.warn(`Navigating to ${currentUrl} with invalid SSL certificate.`);
-        }
-        await page.goto(currentUrl, { waitUntil: "domcontentloaded", timeout: 30000 })
+        // Navigate to the page with error handling
+          try {
+            await page.goto(currentUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+            await page.waitForSelector("body", { timeout: 10000 }); // Ensure the page is fully loaded
+          } catch (error) {
+            console.error(`Failed to navigate to ${currentUrl}:`, error);
+            continue; // Skip to the next URL
+          }
 
         // Wait for the page to load more completely
         await page.waitForTimeout(2000)
@@ -214,49 +247,67 @@ export async function crawlCompetitorWebsite(competitorId: number, maxPages = 10
         }
 
         // Extract ad content from the current page
-        const pageAds = await extractAdsFromPage(page, competitor.name)
-        scrapedAds.push(...pageAds)
+        try {
+          // Extract ad content safely
+          const pageContent = await page.content()
+          const pageUrl = page.url()
 
-        // Find links to other pages on the same domain
-        const links = await safeEvaluate(
-          page,
-          () => {
-            return Array.from(document.querySelectorAll("a[href]"))
-              .map((a) => a.getAttribute("href"))
-              .filter(Boolean) as string[]
-          },
-          [],
-        )
+          // Process the page content to find ads
+          const pageAds = await extractAdsFromPageContent(pageContent, pageUrl, competitor.name)
+          scrapedAds.push(...pageAds)
 
-        // Process and add new links to the queue
-        for (const link of links) {
-          try {
-            // Skip if the link contains fragments to avoid
-            if (AVOID_KEYWORDS.some((keyword) => link.toLowerCase().includes(keyword))) {
+          // Find links to other pages on the same domain
+          const links = await safeEvaluate(
+            page,
+            () => {
+              return Array.from(document.querySelectorAll("a[href]"))
+                .map((a) => a.getAttribute("href"))
+                .filter(Boolean) as string[]
+            },
+            [],
+          )
+
+          // Process and add new links to the queue
+          for (const link of links) {
+            try {
+              // Skip if the link contains fragments to avoid
+              if (AVOID_KEYWORDS.some((keyword) => link.toLowerCase().includes(keyword))) {
+                continue
+              }
+
+              // Resolve relative URLs
+              let fullUrl = link
+              if (link.startsWith("/")) {
+                fullUrl = `${baseUrl}${link}`
+              } else if (!link.startsWith("http")) {
+                try {
+                  fullUrl = new URL(link, currentUrl).href
+                } catch (e) {
+                  continue // Skip invalid URLs
+                }
+              }
+
+              // Only add URLs from the same domain
+              try {
+                const linkUrl = new URL(fullUrl)
+                if (
+                  linkUrl.hostname === new URL(baseUrl).hostname &&
+                  !visitedUrls.has(fullUrl) &&
+                  !urlsToVisit.includes(fullUrl)
+                ) {
+                  urlsToVisit.push(fullUrl)
+                }
+              } catch (e) {
+                continue // Skip invalid URLs
+              }
+            } catch (error) {
+              // Skip invalid URLs
               continue
             }
-
-            // Resolve relative URLs
-            let fullUrl = link
-            if (link.startsWith("/")) {
-              fullUrl = `${baseUrl}${link}`
-            } else if (!link.startsWith("http")) {
-              fullUrl = new URL(link, currentUrl).href
-            }
-
-            // Only add URLs from the same domain
-            const linkUrl = new URL(fullUrl)
-            if (
-              linkUrl.hostname === new URL(baseUrl).hostname &&
-              !visitedUrls.has(fullUrl) &&
-              !urlsToVisit.includes(fullUrl)
-            ) {
-              urlsToVisit.push(fullUrl)
-            }
-          } catch {
-            // Skip invalid URLs
-            continue
           }
+        } catch (error) {
+          console.error(`Error processing page ${currentUrl}:`, error)
+          // Continue with the next URL
         }
 
         // Add a small delay between page visits
@@ -294,9 +345,86 @@ export async function crawlCompetitorWebsite(competitorId: number, maxPages = 10
 }
 
 /**
- * Extracts ad content from a page
+ * Extracts ad content from HTML content
+ * This is a safer approach that doesn't rely on element handles
  */
-async function extractAdsFromPage(page: Page, competitorName: string): Promise<ScrapedAd[]> {
+async function extractAdsFromPageContent(html: string, pageUrl: string, competitorName: string): Promise<ScrapedAd[]> {
+  const ads: ScrapedAd[] = []
+
+  try {
+    // Create a DOM parser
+    const dom = new JSDOM(html);
+    const doc = dom.window.document;
+
+    // 1. Look for elements with ad-related classes or IDs
+    const adSelectors = [
+      '[class*="ad-"]',
+      '[class*="ads-"]',
+      '[class*="advert"]',
+      '[class*="promo"]',
+      '[class*="banner"]',
+      '[class*="offer"]',
+      '[class*="campaign"]',
+      '[id*="ad-"]',
+      '[id*="ads-"]',
+      '[id*="advert"]',
+      '[id*="promo"]',
+      '[id*="banner"]',
+      '[id*="offer"]',
+      '[id*="campaign"]',
+    ];
+
+    // Find elements matching ad selectors
+    adSelectors.forEach((selector) => {
+      const elements = doc.querySelectorAll(selector);
+      elements.forEach((element) => {
+      const adContent = element.textContent?.trim();
+      if (adContent) {
+        ads.push({
+        type: "text" as AdType,
+        content: adContent,
+        mediaUrl: "",
+        landingPage: pageUrl,
+        firstSeen: new Date().toISOString(),
+        isActive: true,
+        });
+      }
+      });
+    });
+
+    // Extract text content from HTML
+    const bodyText = doc.body.textContent || ""
+    const paragraphs = bodyText.split("\n").filter((p) => p.trim().length > 20)
+
+    // Look for paragraphs with ad keywords
+    for (const paragraph of paragraphs) {
+      // Check if paragraph contains multiple ad keywords
+      const keywordMatches = AD_KEYWORDS.filter((keyword) => paragraph.toLowerCase().includes(keyword))
+      if (keywordMatches.length >= 2) {
+        // This paragraph likely contains ad content
+        ads.push({
+          type: "text",
+          content: paragraph.trim(),
+          mediaUrl: "",
+          landingPage: pageUrl,
+          firstSeen: new Date().toISOString(),
+          isActive: true,
+        })
+      }
+    }
+
+    return ads
+  } catch (error) {
+    console.error("Error extracting ads from page content:", error)
+    return ads
+  }
+}
+
+/**
+ * Extracts ad content from a page
+ * This is kept for reference but not used directly anymore
+ */
+export async function extractAdsFromPage(page: Page, competitorName: string): Promise<ScrapedAd[]> {
   const ads: ScrapedAd[] = []
 
   try {
@@ -318,119 +446,12 @@ async function extractAdsFromPage(page: Page, competitorName: string): Promise<S
       '[id*="campaign"]',
     ]
 
-    for (const selector of adSelectors) {
-      const elements = await page.$$(selector)
-      for (const element of elements) {
-        try {
-          // Extract content
-          const content = await element.evaluate((el) => el.textContent || "")
-          if (!content || content.trim().length < 10) continue
+    // Get the page content instead of working with elements
+    const content = await page.content()
+    const pageUrl = page.url()
 
-          // Check if it contains ad keywords
-          if (!AD_KEYWORDS.some((keyword) => content.toLowerCase().includes(keyword))) continue
-
-          // Determine ad type
-          let type: AdType = "text"
-          const hasImage = await element.$("img")
-          const hasVideo = await element.$("video")
-          if (hasVideo) {
-            type = "video"
-          } else if (hasImage) {
-            type = "image"
-          }
-
-          // Extract media URL
-          let mediaUrl = ""
-          if (type === "image") {
-            const img = await element.$("img")
-            if (img) {
-              mediaUrl = await img.evaluate((el) => el.getAttribute("src") || "")
-            }
-          } else if (type === "video") {
-            const video = await element.$("video")
-            if (video) {
-              mediaUrl = await video.evaluate((el) => el.getAttribute("src") || "")
-            }
-          }
-
-          // Extract landing page
-          let landingPage = ""
-          const link = await element.$("a")
-          if (link) {
-            landingPage = await link.evaluate((el) => el.getAttribute("href") || "")
-            // Resolve relative URLs
-            if (landingPage.startsWith("/")) {
-              landingPage = new URL(landingPage, page.url()).href
-            } else if (!landingPage.startsWith("http")) {
-              landingPage = new URL(landingPage, page.url()).href
-            }
-          }
-
-          // Add to ads list
-          ads.push({
-            type,
-            content: content.trim(),
-            mediaUrl,
-            landingPage,
-            firstSeen: new Date().toISOString(),
-            isActive: true,
-          })
-        } catch (error) {
-          console.error("Error extracting ad content:", error)
-          continue
-        }
-      }
-    }
-
-    // 2. Look for iframes that might contain ads
-    const iframes = await page.$$("iframe")
-    for (const iframe of iframes) {
-      try {
-        const src = await iframe.evaluate((el) => el.getAttribute("src") || "")
-        if (
-          src &&
-          (src.includes("ad") ||
-            src.includes("ads") ||
-            src.includes("banner") ||
-            src.includes("promo") ||
-            src.includes("campaign"))
-        ) {
-          ads.push({
-            type: "text",
-            content: `Iframe ad from ${competitorName} - Source: ${src}`,
-            mediaUrl: "",
-            landingPage: src,
-            firstSeen: new Date().toISOString(),
-            isActive: true,
-          })
-        }
-      } catch (error) {
-        console.error("Error extracting iframe content:", error)
-        continue
-      }
-    }
-
-    // 3. Look for sections with ad-related text content
-    const bodyText = await page.evaluate(() => document.body.innerText)
-    const paragraphs = bodyText.split("\n").filter((p) => p.trim().length > 20)
-
-    for (const paragraph of paragraphs) {
-      // Check if paragraph contains multiple ad keywords
-      const keywordMatches = AD_KEYWORDS.filter((keyword) => paragraph.toLowerCase().includes(keyword))
-      if (keywordMatches.length >= 2) {
-        // This paragraph likely contains ad content
-        ads.push({
-          type: "text",
-          content: paragraph.trim(),
-          mediaUrl: "",
-          landingPage: page.url(),
-          firstSeen: new Date().toISOString(),
-          isActive: true,
-        })
-      }
-    }
-
-    return ads
+    // Use the safer method
+    return await extractAdsFromPageContent(content, pageUrl, competitorName)
   } catch (error) {
     console.error("Error extracting ads from page:", error)
     return ads
@@ -443,6 +464,7 @@ async function extractAdsFromPage(page: Page, competitorName: string): Promise<S
 export async function processScrapedWebsiteAds(
   competitorId: number,
   scrapedAds: ScrapedAd[],
+  userId: string, // Add userId parameter
 ): Promise<{ added: number; updated: number; errors: number }> {
   const results = {
     added: 0,
@@ -453,7 +475,10 @@ export async function processScrapedWebsiteAds(
   try {
     // Get existing ads for this competitor
     const existingAds = await db.query.ads.findMany({
-      where: eq(ads.competitorId, competitorId),
+      where: and(
+        eq(ads.competitorId, competitorId),
+        eq(ads.userId, userId), // Filter by userId
+      ),
     })
 
     // Create a map of existing ad content for faster lookup
@@ -476,7 +501,12 @@ export async function processScrapedWebsiteAds(
               lastSeen: new Date(),
               updatedAt: new Date(),
             })
-            .where(eq(ads.id, existingAd.id))
+            .where(
+              and(
+                eq(ads.id, existingAd.id),
+                eq(ads.userId, userId), // Ensure user owns the ad
+              ),
+            )
 
           results.updated++
         } else {
@@ -486,6 +516,7 @@ export async function processScrapedWebsiteAds(
 
             // Insert the new ad
             await db.insert(ads).values({
+              userId, // Add user ID to link directly to the user
               competitorId,
               platform: "other" as Platform, // Website ads are categorized as "other"
               type: adData.type as AdType,
@@ -504,6 +535,7 @@ export async function processScrapedWebsiteAds(
 
             // Still insert the ad even if AI analysis fails
             await db.insert(ads).values({
+              userId, // Add user ID to link directly to the user
               competitorId,
               platform: "other" as Platform,
               type: adData.type as AdType,

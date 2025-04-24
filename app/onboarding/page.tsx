@@ -121,7 +121,7 @@ export default function OnboardingPage() {
       const competitorsData = await competitorsResponse.json();
 
       // Trigger scraping for each competitor
-      const scrapePromises = competitorsData.map((competitor: { id: number }) =>
+      const scrapePromises = competitorsData.map((competitor: { id: string }) =>
         fetch(`/api/competitors/${competitor.id}/scrape`, {
           method: "POST",
         }),

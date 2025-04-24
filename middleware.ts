@@ -20,6 +20,7 @@ const isProtectedRoute = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, req) => {
   // Use destructured auth approach as requested
+    
   const { userId, redirectToSignIn } = await auth()
   
   const url = new URL(req.url);
