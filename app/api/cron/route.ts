@@ -78,7 +78,7 @@ export async function POST(request: Request) {
       const businesses = await db.query.businesses.findMany()
 
       for (const business of businesses) {
-        await generateInsightFromRecentActivity(business.id)
+        await generateInsightFromRecentActivity(business.id, business.id)
       }
 
       console.log("Generated insights based on recent activity")
