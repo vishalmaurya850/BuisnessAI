@@ -3,11 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "pnpm exec playwright install",
+    "predev": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "dev": "next dev",
-    "prebuild": "pnpm exec playwright install",
+    "prebuild": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "build": "next build",
-    "prestart": "pnpm exec playwright install",
+    "prestart": "pnpm exec playwright install && pnpm exec playwright install-deps",
     "start": "next start",
     "lint": "next lint"
   },
